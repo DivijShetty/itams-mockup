@@ -22,3 +22,8 @@
 /* Filters on asset and assignment tables */
 .filter-toolbar{align-items:center;flex-wrap:wrap}.filter-toolbar select{border:1px solid #e2e7f0;border-radius:7px;padding:10px 30px 10px 10px;background:#fff;color:#536076;font-size:12px;min-width:135px;max-width:100%}.filter-toolbar .search{flex:1;min-width:210px}.filter-toolbar .secondary{white-space:nowrap}
 @media(max-width:720px){.filter-toolbar{align-items:stretch}.filter-toolbar .search{min-width:100%;max-width:none}.filter-toolbar select{flex:1;min-width:130px}}
+.date-filter{display:grid;gap:4px;color:#8792a4;font-size:10px;font-weight:700}.date-filter input{border:1px solid #e2e7f0;border-radius:7px;padding:9px 8px;background:#fff;color:#536076;font:inherit;font-size:12px;min-width:140px}
+
+/* Recent activity */
+.activity-list{display:grid}.activity-item{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:12px;align-items:start;padding:14px 2px;border-bottom:1px solid #edf0f5}.activity-item:last-child{border-bottom:0}.activity-dot{width:9px;height:9px;border-radius:50%;margin-top:5px;background:#9aa3b2}.activity-asset{background:#5570ed}.activity-employee{background:#8a65d6}.activity-assignment,.activity-return{background:#35a66f}.activity-repair{background:#e9a23b}.activity-status{background:#d95b61}.activity-copy b{font-size:12px}.activity-copy p{font-size:11px;color:#788397;margin:4px 0 0;line-height:1.5}.activity-item time{font-size:10px;color:#8b95a5;white-space:nowrap}
+@media(max-width:720px){.activity-item{grid-template-columns:9px minmax(0,1fr)}.activity-item time{grid-column:2}}
