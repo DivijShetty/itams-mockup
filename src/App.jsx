@@ -12,6 +12,7 @@ import { initialAssets, initialEmployees, initialAssignments, emptyAsset, curren
 const nav = [
   {label:'Dashboard', icon:LayoutDashboard},
   {label:'Assets', icon:Laptop},
+  {label:'Bulk Stock', icon:Package},
   {label:'Employees', icon:Users},
   {label:'Assignments', icon:ArrowLeftRight},
   {label:'Repairs', icon:Wrench},
@@ -39,7 +40,13 @@ function Modal({title,children,onClose,wide=false}) {
   </div>;
 }
 function App() {
-  const [assets,setAssets] = useState(()=>readSaved('itam-assets',initialAssets));
+  const [assets,setAssets] = useState(()=>readSaved('itam-assets',initialAssets).filter(a=>!a.quantityTracked));
+  const [bulkItems,setBulkItems] = useState(()=>{
+    const saved=localStorage.getItem('itam-bulk-items');
+    if(saved){try{return JSON.parse(saved)}catch{}}
+    return readSaved('itam-assets',initialAssets).filter(a=>a.quantityTracked).map(a=>({id:a.id,tag:a.tag,name:a.name,category:a.category,brand:a.brand||'',model:a.model||'',totalQuantity:Number(a.quantity??a.availableQuantity??0),availableQuantity:Number(a.availableQuantity??a.quantity??0),damagedQuantity:Number(a.damagedQuantity||0),repairQuantity:Number(a.repairQuantity||0),minimumStock:Number(a.minimumStock??5),location:a.location||'IT Store Room',unitCost:Number(a.purchasePrice||0),notes:a.notes||''}));
+  });
+  const [bulkTransactions,setBulkTransactions] = useState(()=>readSaved('itam-bulk-transactions',[]));
   const [employees,setEmployees] = useState(()=>readSaved('itam-employees',initialEmployees));
   const [assignments,setAssignments] = useState(()=>readSaved('itam-assignments',initialAssignments));
   const [activity,setActivity] = useState(()=>readSaved('itam-activity',[]));
@@ -53,6 +60,11 @@ function App() {
   const [employeeForm,setEmployeeForm] = useState({employeeId:'',name:'',department:'',email:'',active:true});
   const [editingEmployeeId,setEditingEmployeeId] = useState(null);
   const [assignmentForm,setAssignmentForm] = useState({assetId:'',employeeId:'',assignedDate:localDateString(),notes:'',isTemporary:false,originalAssetId:'',temporaryReason:'Original laptop under repair'});
+  const [bulkItemForm,setBulkItemForm] = useState({name:'',category:'Mouse',brand:'',model:'',quantity:'',minimumStock:'5',location:'IT Store Room',unitCost:'',notes:''});
+  const [bulkRestockForm,setBulkRestockForm] = useState({itemId:'',quantity:'',date:localDateString(),notes:''});
+  const [bulkIssueForm,setBulkIssueForm] = useState({itemId:'',employeeId:'',quantity:'1',issuedDate:localDateString(),issuedBy:'IT Administrator',notes:''});
+  const [bulkReturnForm,setBulkReturnForm] = useState({transactionId:'',quantity:'1',returnedDate:localDateString(),condition:'Available',notes:''});
+  const [bulkSearch,setBulkSearch] = useState('');
   const [repairForm,setRepairForm] = useState({description:'',reportedDate:localDateString(),vendor:'',cost:''});
   const [returnForm,setReturnForm] = useState({returnedDate:localDateString(),nextStatus:'Available',notes:'',repairDescription:'',repairVendor:'',repairCost:''});
   const [returningAssignment,setReturningAssignment] = useState(null);
@@ -64,6 +76,8 @@ function App() {
   const persistAssets = next => { setAssets(next); localStorage.setItem('itam-assets',JSON.stringify(next)); };
   const persistEmployees = next => { setEmployees(next); localStorage.setItem('itam-employees',JSON.stringify(next)); };
   const persistAssignments = next => { setAssignments(next); localStorage.setItem('itam-assignments',JSON.stringify(next)); };
+  const persistBulkItems = next => { setBulkItems(next); localStorage.setItem('itam-bulk-items',JSON.stringify(next)); };
+  const persistBulkTransactions = next => { setBulkTransactions(next); localStorage.setItem('itam-bulk-transactions',JSON.stringify(next)); };
   const notify = msg => { setToast(msg); setTimeout(()=>setToast(''),2800); };
   const logActivity = (type,title,detail='') => { const entry={id:Date.now(),type,title,detail,date:new Date().toISOString()}; const next=[entry,...activity].slice(0,30); setActivity(next); localStorage.setItem('itam-activity',JSON.stringify(next)); };
   const today = new Date(); today.setHours(0,0,0,0);
@@ -180,6 +194,69 @@ function App() {
     persistAssets(assets.map(a=>a.id===assetId?{...a,status:'Assigned',employeeId}:a));
     logActivity('assignment',assignment.isTemporary?'Temporary asset assigned':'Asset assigned',`${asset.tag} → ${employee.name}`);
     setModal(null);setPage('Assignments');notify(assignment.isTemporary?'Temporary laptop allotted successfully.':'Asset assigned successfully.');
+  };
+  const openBulkItemDialog = () => {
+    setBulkItemForm({name:'',category:'Mouse',brand:'',model:'',quantity:'',minimumStock:'5',location:'IT Store Room',unitCost:'',notes:''});
+    setModal('bulk-item');
+  };
+  const submitBulkItem = e => {
+    e.preventDefault();
+    const quantity=Number(bulkItemForm.quantity), minimumStock=Number(bulkItemForm.minimumStock||0);
+    if(!bulkItemForm.name.trim()||!Number.isInteger(quantity)||quantity<0||!Number.isInteger(minimumStock)||minimumStock<0){notify('Enter a valid item name and whole-number quantities.');return;}
+    const id=Math.max(0,...bulkItems.map(item=>item.id))+1;
+    const item={id,tag:`BULK-${String(id).padStart(3,'0')}`,name:bulkItemForm.name.trim(),category:bulkItemForm.category,brand:bulkItemForm.brand.trim(),model:bulkItemForm.model.trim(),totalQuantity:quantity,availableQuantity:quantity,damagedQuantity:0,repairQuantity:0,minimumStock,location:bulkItemForm.location.trim()||'Not specified',unitCost:Number(bulkItemForm.unitCost||0),notes:bulkItemForm.notes.trim()};
+    persistBulkItems([item,...bulkItems]);
+    logActivity('asset','Bulk stock item added',`${item.name} · ${quantity} units`);
+    setModal(null);notify('Bulk stock item added.');
+  };
+  const submitBulkRestock = e => {
+    e.preventDefault();
+    const item=bulkItems.find(x=>x.id===Number(bulkRestockForm.itemId));
+    const quantity=Number(bulkRestockForm.quantity);
+    if(!item||!Number.isInteger(quantity)||quantity<=0){notify('Choose an item and enter a positive whole-number quantity.');return;}
+    persistBulkItems(bulkItems.map(x=>x.id===item.id?{...x,totalQuantity:x.totalQuantity+quantity,availableQuantity:x.availableQuantity+quantity}:x));
+    logActivity('asset','Bulk stock restocked',`${item.name} · +${quantity} units · received ${bulkRestockForm.date||localDateString()}${bulkRestockForm.notes.trim()?` · ${bulkRestockForm.notes.trim()}`:''}`);
+    setModal(null);notify(`${quantity} ${item.name} unit(s) added to available stock.`);
+  };
+  const submitBulkIssue = e => {
+    e.preventDefault();
+    const item=bulkItems.find(x=>x.id===Number(bulkIssueForm.itemId));
+    const employee=employees.find(x=>x.id===Number(bulkIssueForm.employeeId));
+    const quantity=Number(bulkIssueForm.quantity);
+    if(!item||!employee||!employee.active){notify('Choose a bulk item and an active employee.');return;}
+    if(!Number.isInteger(quantity)||quantity<=0){notify('Quantity must be a positive whole number.');return;}
+    if(quantity>item.availableQuantity){notify(`Only ${item.availableQuantity} unit(s) are available.`);return;}
+    const transaction={id:Math.max(0,...bulkTransactions.map(t=>t.id))+1,itemId:item.id,employeeId:employee.id,quantityIssued:quantity,quantityReturned:0,issuedDate:bulkIssueForm.issuedDate||localDateString(),issuedBy:bulkIssueForm.issuedBy.trim()||'IT Administrator',notes:bulkIssueForm.notes.trim(),returnEvents:[]};
+    persistBulkItems(bulkItems.map(x=>x.id===item.id?{...x,availableQuantity:x.availableQuantity-quantity}:x));
+    persistBulkTransactions([transaction,...bulkTransactions]);
+    logActivity('assignment','Bulk stock issued',`${item.name} · ${quantity} unit(s) → ${employee.name}`);
+    setModal(null);setPage('Bulk Stock');notify(`${quantity} ${item.name} unit(s) issued to ${employee.name}.`);
+  };
+  const openBulkReturn = transaction => {
+    const outstanding=transaction.quantityIssued-transaction.quantityReturned;
+    setBulkReturnForm({transactionId:String(transaction.id),quantity:String(outstanding),returnedDate:localDateString(),condition:'Available',notes:''});
+    setModal('bulk-return');
+  };
+  const submitBulkReturn = e => {
+    e.preventDefault();
+    const transaction=bulkTransactions.find(x=>x.id===Number(bulkReturnForm.transactionId));
+    if(!transaction){notify('Could not find the issue record.');return;}
+    const outstanding=transaction.quantityIssued-transaction.quantityReturned;
+    const quantity=Number(bulkReturnForm.quantity);
+    if(!Number.isInteger(quantity)||quantity<=0||quantity>outstanding){notify(`Enter a return quantity between 1 and ${outstanding}.`);return;}
+    const item=bulkItems.find(x=>x.id===transaction.itemId);
+    if(!item){notify('Could not find the bulk stock item.');return;}
+    const event={id:Date.now(),date:bulkReturnForm.returnedDate||localDateString(),quantity,condition:bulkReturnForm.condition,notes:bulkReturnForm.notes.trim()};
+    const updatedItem={...item};
+    if(event.condition==='Available')updatedItem.availableQuantity+=quantity;
+    else if(event.condition==='Damaged')updatedItem.damagedQuantity+=quantity;
+    else updatedItem.repairQuantity+=quantity;
+    const nextTransactions=bulkTransactions.map(x=>x.id===transaction.id?{...x,quantityReturned:x.quantityReturned+quantity,returnEvents:[event,...(x.returnEvents||[])]}:x);
+    persistBulkItems(bulkItems.map(x=>x.id===item.id?updatedItem:x));
+    persistBulkTransactions(nextTransactions);
+    const employee=employees.find(x=>x.id===transaction.employeeId);
+    logActivity('return','Bulk stock returned',`${item.name} · ${quantity} unit(s) from ${employee?.name||'employee'} · ${event.condition}`);
+    setModal(null);notify(`${quantity} unit(s) recorded as returned (${event.condition.toLowerCase()}).`);
   };
   const openReturnDialog = (assignment, suggestedStatus='Available') => {
     setReturningAssignment(assignment);
@@ -309,11 +386,21 @@ function App() {
 .badge-temporary{background:#fff1e4;color:#bd762f}
 .badge-regular{background:#edf1ff;color:#4969cf}
 .badge-retired{background:#f0f1f4;color:#757b87}
+.bulk-stats{grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:18px}
+.bulk-stats .stat-card{min-height:116px}
+.bulk-stats .stat-title{margin-top:10px}
+.bulk-stats .stat-sub{font-size:9px}
+.subtabs{margin:0 18px 15px}
+.table-wrap td small{display:block;font-size:9px;color:#8d95a5;margin-top:4px;line-height:1.4;white-space:normal}
+.row-actions .btn{padding:6px 8px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+@media(max-width:760px){.bulk-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
 @media(max-width:760px){.assignment-status-select{min-width:105px;max-width:120px}}`}</style>
     <aside className="sidebar">
-      <div className="brand"><div className="brand-mark"><Package size={21}/></div><div><span>IT ASSET MANAGEMENT</span></div></div>
+      <div className="brand"><div className="brand-mark"><Package size={21}/></div><div><strong>assetwise</strong><span>IT ASSET MANAGEMENT</span></div></div>
       <div className="workspace-label">WORKSPACE</div>
-      <nav><div className="nav-group"><p>OVERVIEW</p>{nav.filter(item=>item.label==='Dashboard').map(item=><button key={item.label} className={`nav-item ${page===item.label?'active':''}`} onClick={()=>navTo(item.label)}><item.icon size={18}/><span>{item.label}</span></button>)}</div><div className="nav-group"><p>ASSET MANAGEMENT</p>{nav.filter(item=>['Assets','Employees','Assignments'].includes(item.label)).map(item=><button key={item.label} className={`nav-item ${page===item.label?'active':''}`} onClick={()=>navTo(item.label)}><item.icon size={18}/><span>{item.label}</span>{item.label==='Assets'&&<span className="nav-count">{activeAssets.length}</span>}</button>)}</div><div className="nav-group"><p>OPERATIONS</p>{nav.filter(item=>item.label==='Repairs').map(item=><button key={item.label} className={`nav-item ${page===item.label?'active':''}`} onClick={()=>navTo(item.label)}><item.icon size={18}/><span>{item.label}</span></button>)}</div><div className="nav-group"><p>REPORTING</p>{nav.filter(item=>item.label==='Reports').map(item=><button key={item.label} className={`nav-item ${page===item.label?'active':''}`} onClick={()=>navTo(item.label)}><item.icon size={18}/><span>{item.label}</span></button>)}</div></nav>
+      <nav><div className="nav-group"><p>OVERVIEW</p>{nav.filter(item=>item.label==='Dashboard').map(item=><button key={item.label} className={`nav-item ${page===item.label?'active':''}`} onClick={()=>navTo(item.label)}><item.icon size={18}/><span>{item.label}</span></button>)}</div><div className="nav-group"><p>ASSET MANAGEMENT</p>{nav.filter(item=>['Assets','Bulk Stock','Employees','Assignments'].includes(item.label)).map(item=><button key={item.label} className={`nav-item ${page===item.label?'active':''}`} onClick={()=>navTo(item.label)}><item.icon size={18}/><span>{item.label}</span>{item.label==='Assets'&&<span className="nav-count">{activeAssets.length}</span>}</button>)}</div><div className="nav-group"><p>OPERATIONS</p>{nav.filter(item=>item.label==='Repairs').map(item=><button key={item.label} className={`nav-item ${page===item.label?'active':''}`} onClick={()=>navTo(item.label)}><item.icon size={18}/><span>{item.label}</span></button>)}</div><div className="nav-group"><p>REPORTING</p>{nav.filter(item=>item.label==='Reports').map(item=><button key={item.label} className={`nav-item ${page===item.label?'active':''}`} onClick={()=>navTo(item.label)}><item.icon size={18}/><span>{item.label}</span></button>)}</div></nav>
       <div className="sidebar-bottom">
         <div className="help-card"><div className="help-icon"><CircleHelp size={18}/></div><strong>Need a hand?</strong><p>Manage assets, assignments and repairs from one place.</p></div>
         <button className={`nav-item ${page==='Settings'?'active':''}`} onClick={()=>navTo('Settings')}><Settings size={18}/><span>Settings</span></button>
@@ -327,12 +414,13 @@ function App() {
       </header>
       <div className="content">
         {page==='Dashboard'&&<DashboardPage counts={counts} expiring={expiring} expired={expired} recentAssets={recentAssets} assets={assets} employees={employees} activity={activity} onAdd={resetAssetForm} onNavigate={navTo} onFilterStatus={status=>{setPage('Assets');setQuery('');setStatusFilter(status);setCategoryFilter('All categories')}} onFilterCategory={category=>{setPage('Assets');setQuery('');setStatusFilter('All statuses');setCategoryFilter(category)}} onView={a=>{setSelectedAsset(a);setModal('details')}} currency={currency} dateLabel={dateLabel}/>}
+        {page==='Bulk Stock'&&<BulkStockPage items={bulkItems} transactions={bulkTransactions} employees={employees} search={bulkSearch} setSearch={setBulkSearch} onAdd={openBulkItemDialog} onRestock={item=>{setBulkRestockForm({itemId:String(item.id),quantity:'',date:localDateString(),notes:''});setModal('bulk-restock')}} onIssue={item=>{setBulkIssueForm({itemId:String(item?.id||''),employeeId:'',quantity:'1',issuedDate:localDateString(),issuedBy:'IT Administrator',notes:''});setModal('bulk-issue')}} onReturn={openBulkReturn} currency={currency} dateLabel={dateLabel}/>}
         {page==='Assets'&&<AssetsPage assets={filteredAssets} allAssets={assets} employees={employees} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} categoryFilter={categoryFilter} setCategoryFilter={setCategoryFilter} onAdd={resetAssetForm} onEdit={editAsset} onView={a=>{setSelectedAsset(a);setModal('details')}} onStatus={markStatus} currentEmployee={currentEmployee} currency={currency} dateLabel={dateLabel} warrantyStatus={warrantyStatus}/>}
         {page==='Employees'&&<EmployeesPage employees={employees} assets={assets} onAdd={()=>{setEditingEmployeeId(null);setEmployeeForm({employeeId:'',name:'',department:'',email:'',active:true});setModal('employee')}} onView={e=>{setSelectedAsset(e);setModal('employeeDetails')}} onEdit={editEmployee}/>}
         {page==='Assignments'&&<AssignmentsPage assignments={assignments} assets={assets} employees={employees} onAdd={()=>{setAssignmentForm({assetId:'',employeeId:'',assignedDate:localDateString(),notes:'',isTemporary:false,originalAssetId:'',temporaryReason:'Original laptop under repair'});setModal('assign')}} onReturn={openReturnDialog} onStatusChange={markStatus} dateLabel={dateLabel}/>}
         {page==='Repairs'&&<RepairsPage assets={assets} onComplete={completeRepair} onOpen={a=>{setSelectedAsset(a);setRepairForm({description:a.notes||'',reportedDate:a.repairReportedDate||localDateString(),vendor:a.vendor||'',cost:String(a.currentRepairCost??(a.repairHistory||[]).find(r=>!r.completedDate)?.cost??'')});setModal('repair')}} currency={currency} dateLabel={dateLabel}/>}
         {page==='Reports'&&<ReportsPage assets={assets} assignments={assignments} employees={employees} currency={currency}/>}
-        {page==='Settings'&&<SettingsPage onReset={()=>{if(confirm('Restore the initial records? This clears saved changes in this browser.')){localStorage.removeItem('itam-assets');localStorage.removeItem('itam-employees');localStorage.removeItem('itam-assignments');localStorage.removeItem('itam-activity');location.reload();}}}/>}
+        {page==='Settings'&&<SettingsPage onReset={()=>{if(confirm('Restore the initial records? This clears saved changes in this browser.')){localStorage.removeItem('itam-assets');localStorage.removeItem('itam-employees');localStorage.removeItem('itam-assignments');localStorage.removeItem('itam-activity');localStorage.removeItem('itam-bulk-items');localStorage.removeItem('itam-bulk-transactions');location.reload();}}}/>}
       </div>
     </main>
     {modal==='asset'&&<Modal title={editingAsset?'Edit asset':'Add new asset'} onClose={()=>setModal(null)} wide>
@@ -399,6 +487,46 @@ function App() {
         <div className="form-section-title">Employment status</div>
         <label className="temporary-toggle"><input type="checkbox" checked={Boolean(employeeForm.active)} onChange={e=>setEmployeeForm({...employeeForm,active:e.target.checked})}/><span><strong>Active employee</strong><small>Inactive employees cannot receive new assignments.</small></span></label>
         <div className="modal-actions"><button type="button" className="btn secondary" onClick={()=>{setModal(null);setEditingEmployeeId(null)}}>Cancel</button><button type="submit" className="btn primary">{editingEmployeeId?'Save changes':'Add employee'}</button></div>
+      </form>
+    </Modal>}
+    {modal==='bulk-item'&&<Modal title="Add bulk stock item" onClose={()=>setModal(null)}>
+      <form className="form-body" onSubmit={submitBulkItem}>
+        <div className="info-callout"><Package size={17}/><span>Use bulk stock for accessories issued by quantity. Individual units do not need unique asset tags.</span></div>
+        <Field label="Item name *"><input required value={bulkItemForm.name} onChange={e=>setBulkItemForm({...bulkItemForm,name:e.target.value})} placeholder="e.g. Logitech Wireless Mouse"/></Field>
+        <div className="form-grid"><Field label="Category *"><select value={bulkItemForm.category} onChange={e=>setBulkItemForm({...bulkItemForm,category:e.target.value})}>{['Mouse','Keyboard','Charger','Cable','Adapter','Headset','Accessory','Other'].map(x=><option key={x}>{x}</option>)}</select></Field><Field label="Starting quantity *"><input type="number" min="0" step="1" required value={bulkItemForm.quantity} onChange={e=>setBulkItemForm({...bulkItemForm,quantity:e.target.value})} placeholder="e.g. 100"/></Field><Field label="Minimum stock level"><input type="number" min="0" step="1" value={bulkItemForm.minimumStock} onChange={e=>setBulkItemForm({...bulkItemForm,minimumStock:e.target.value})}/></Field><Field label="Unit cost (₹)"><input type="number" min="0" step="0.01" value={bulkItemForm.unitCost} onChange={e=>setBulkItemForm({...bulkItemForm,unitCost:e.target.value})} placeholder="Optional"/></Field><Field label="Brand"><input value={bulkItemForm.brand} onChange={e=>setBulkItemForm({...bulkItemForm,brand:e.target.value})} placeholder="Optional"/></Field><Field label="Model"><input value={bulkItemForm.model} onChange={e=>setBulkItemForm({...bulkItemForm,model:e.target.value})} placeholder="Optional"/></Field></div>
+        <Field label="Storage location"><input value={bulkItemForm.location} onChange={e=>setBulkItemForm({...bulkItemForm,location:e.target.value})} placeholder="IT Store Room"/></Field>
+        <Field label="Notes"><textarea rows="2" value={bulkItemForm.notes} onChange={e=>setBulkItemForm({...bulkItemForm,notes:e.target.value})} placeholder="Optional stock notes"/></Field>
+        <div className="modal-actions"><button type="button" className="btn secondary" onClick={()=>setModal(null)}>Cancel</button><button type="submit" className="btn primary">Add stock item</button></div>
+      </form>
+    </Modal>}
+    {modal==='bulk-restock'&&<Modal title="Add stock quantity" onClose={()=>setModal(null)}>
+      <form className="form-body" onSubmit={submitBulkRestock}>
+        <Field label="Bulk item *"><SearchableSelect required value={bulkRestockForm.itemId} placeholder="Search stock item…" options={bulkItems.map(x=>({value:String(x.id),label:`${x.tag} · ${x.name}`}))} onChange={value=>setBulkRestockForm({...bulkRestockForm,itemId:value})}/></Field>
+        <Field label="Quantity received *"><input type="number" min="1" step="1" required value={bulkRestockForm.quantity} onChange={e=>setBulkRestockForm({...bulkRestockForm,quantity:e.target.value})}/></Field>
+        <Field label="Received date *"><input type="date" required value={bulkRestockForm.date} onChange={e=>setBulkRestockForm({...bulkRestockForm,date:e.target.value})}/></Field>
+        <Field label="Notes / purchase reference"><textarea rows="2" value={bulkRestockForm.notes} onChange={e=>setBulkRestockForm({...bulkRestockForm,notes:e.target.value})} placeholder="Optional reference"/></Field>
+        <div className="modal-actions"><button type="button" className="btn secondary" onClick={()=>setModal(null)}>Cancel</button><button type="submit" className="btn primary">Add quantity</button></div>
+      </form>
+    </Modal>}
+    {modal==='bulk-issue'&&<Modal title="Issue bulk stock" onClose={()=>setModal(null)}>
+      <form className="form-body" onSubmit={submitBulkIssue}>
+        <div className="form-section-title">Issue details</div>
+        <Field label="Bulk item *"><SearchableSelect required value={bulkIssueForm.itemId} placeholder="Search stock item…" emptyText="No bulk stock items found" options={bulkItems.filter(x=>x.availableQuantity>0).map(x=>({value:String(x.id),label:`${x.tag} · ${x.name} (${x.availableQuantity} available)`}))} onChange={value=>setBulkIssueForm({...bulkIssueForm,itemId:value})}/></Field>
+        <Field label="Employee receiving items *"><SearchableSelect required value={bulkIssueForm.employeeId} placeholder="Search employee ID or name…" emptyText="No active employees found" options={employees.filter(x=>x.active).map(x=>({value:String(x.id),label:`${x.employeeId} · ${x.name}`}))} onChange={value=>setBulkIssueForm({...bulkIssueForm,employeeId:value})}/></Field>
+        <div className="form-grid"><Field label="Quantity issued *"><input type="number" min="1" step="1" required value={bulkIssueForm.quantity} onChange={e=>setBulkIssueForm({...bulkIssueForm,quantity:e.target.value})}/></Field><Field label="Issue date *"><input type="date" required value={bulkIssueForm.issuedDate} onChange={e=>setBulkIssueForm({...bulkIssueForm,issuedDate:e.target.value})}/></Field></div>
+        <Field label="Issued by *"><input required value={bulkIssueForm.issuedBy} onChange={e=>setBulkIssueForm({...bulkIssueForm,issuedBy:e.target.value})} placeholder="IT staff member"/></Field>
+        <Field label="Notes"><textarea rows="2" value={bulkIssueForm.notes} onChange={e=>setBulkIssueForm({...bulkIssueForm,notes:e.target.value})} placeholder="Purpose, department, or handover notes"/></Field>
+        <div className="modal-actions"><button type="button" className="btn secondary" onClick={()=>setModal(null)}>Cancel</button><button type="submit" className="btn primary">Confirm issue</button></div>
+      </form>
+    </Modal>}
+    {modal==='bulk-return'&&<Modal title="Record bulk stock return" onClose={()=>setModal(null)}>
+      <form className="form-body" onSubmit={submitBulkReturn}>
+        {(()=>{const t=bulkTransactions.find(x=>x.id===Number(bulkReturnForm.transactionId));const item=bulkItems.find(x=>x.id===t?.itemId);const employee=employees.find(x=>x.id===t?.employeeId);return <div className="info-callout"><ArrowDownLeft size={17}/><span><strong>{item?.name||'Bulk item'}</strong><br/>{employee?.name||'Employee'} · {Math.max(0,(t?.quantityIssued||0)-(t?.quantityReturned||0))} unit(s) still outstanding.</span></div>})()}
+        <Field label="Quantity returned *"><input type="number" min="1" step="1" required value={bulkReturnForm.quantity} onChange={e=>setBulkReturnForm({...bulkReturnForm,quantity:e.target.value})}/></Field>
+        <Field label="Return date *"><input type="date" required value={bulkReturnForm.returnedDate} onChange={e=>setBulkReturnForm({...bulkReturnForm,returnedDate:e.target.value})}/></Field>
+        <Field label="Condition of returned items *"><select value={bulkReturnForm.condition} onChange={e=>setBulkReturnForm({...bulkReturnForm,condition:e.target.value})}><option value="Available">Good — return to available stock</option><option value="Damaged">Damaged — not available to issue</option><option value="Under Repair">Needs repair — not available to issue</option></select></Field>
+        <Field label="Return notes"><textarea rows="2" value={bulkReturnForm.notes} onChange={e=>setBulkReturnForm({...bulkReturnForm,notes:e.target.value})} placeholder="Optional condition / handover notes"/></Field>
+        <div className="modal-actions"><button type="button" className="btn secondary" onClick={()=>setModal(null)}>Cancel</button><button type="submit" className="btn primary">Record return</button></div>
       </form>
     </Modal>}
     {modal==='return'&&returningAssignment&&<Modal title="Return asset" onClose={()=>{setModal(null);setReturningAssignment(null)}}>
@@ -538,6 +666,24 @@ function ReportsPage({assets,assignments,employees,currency}) {
   const rows=[['Available',assets.filter(a=>a.status==='Available').length],['Assigned',assets.filter(a=>a.status==='Assigned').length],['Under Repair',assets.filter(a=>a.status==='Under Repair').length],['Missing',assets.filter(a=>a.status==='Missing').length],['Retired',assets.filter(a=>a.status==='Retired').length],['Sold',sold],['Scrapped',scrap]];
   return <><PageHeading eyebrow="INSIGHTS" title="Reports" description="A quick snapshot of inventory value, costs and lifecycle status." action={<button className="btn secondary" onClick={()=>{const csv=[['Asset Tag','Name','Category','Status','Condition','Purchase Price','Maintenance Cost','Warranty Start','Warranty Expiry','Warranty Status','Warranty Provider','Warranty Coverage'],...assets.map(a=>[a.tag,a.name,a.category,a.status,a.condition,a.purchasePrice,a.maintenanceCost,a.warrantyStart,a.warrantyExpiry,a.warrantyExpiry?(new Date(a.warrantyExpiry+'T00:00:00')<new Date(new Date().setHours(0,0,0,0))?'Expired':(new Date(a.warrantyExpiry+'T00:00:00')<=new Date(new Date().setHours(0,0,0,0)+30*86400000)?'Expiring soon':'Active')):'Not recorded',a.warrantyProvider,a.warrantyCoverage])].map(row=>row.map(v=>`"${String(v??'').replaceAll('"','""')}"`).join(',')).join('\\n');const blob=new Blob([csv],{type:'text/csv'});const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download='itam-assets-report.csv';link.click();URL.revokeObjectURL(url)}}><Download size={16}/> Export asset CSV</button>}/><div className="report-kpis"><div className="report-kpi"><span>Active inventory value</span><strong>{currency(total)}</strong><small>Purchase price · excluding sold/scrapped</small></div><div className="report-kpi"><span>Maintenance spend</span><strong>{currency(maint)}</strong><small>Recorded maintenance costs</small></div><div className="report-kpi"><span>Assignment records</span><strong>{assignments.length}</strong><small>Active and historical handovers</small></div><div className="report-kpi"><span>Employees</span><strong>{employees.length}</strong><small>Employee records</small></div></div><section className="panel report-panel"><div className="panel-head"><div><h2>Asset lifecycle</h2><p>Count by current status</p></div></div>{rows.map(([label,value])=><div className="bar-row" key={label}><span>{label}</span><div className="bar-track" style={{display:'block',width:'100%',height:8,backgroundColor:'#eef1f6',borderRadius:8,overflow:'hidden'}}><div className="bar-fill" style={{display:'block',height:'100%',width:`${assets.length?Math.max(value?2:0,Math.min(100,value/assets.length*100)):0}%`,backgroundColor:({'Available':'#35a66f','Assigned':'#5570ed','Under Repair':'#e9a23b','Missing':'#d95b61','Retired':'#9aa3b2','Sold':'#9a7de1','Scrapped':'#9aa3b2'})[label],borderRadius:8,transition:'width .25s ease'}}/></div><strong>{value}</strong></div>)}</section><div className="form-note report-note">Report figures are calculated from the current inventory records.</div></>;
 }
+function BulkStockPage({items,transactions,employees,search,setSearch,onAdd,onRestock,onIssue,onReturn,currency,dateLabel}) {
+  const [tab,setTab]=useState('Stock');
+  const [historySearch,setHistorySearch]=useState('');
+  const issuedFor = item => transactions.filter(t=>t.itemId===item.id).reduce((sum,t)=>sum+Math.max(0,t.quantityIssued-t.quantityReturned),0);
+  const filteredItems=items.filter(item=>[item.tag,item.name,item.category,item.brand,item.location].some(v=>(v||'').toLowerCase().includes(search.toLowerCase())));
+  const filteredTransactions=transactions.filter(t=>{const item=items.find(x=>x.id===t.itemId);const employee=employees.find(x=>x.id===t.employeeId);return [item?.name,item?.tag,employee?.name,employee?.employeeId,t.issuedBy,t.notes].some(v=>(v||'').toLowerCase().includes(historySearch.toLowerCase()));});
+  const totalAvailable=items.reduce((sum,item)=>sum+item.availableQuantity,0);
+  const totalIssued=items.reduce((sum,item)=>sum+issuedFor(item),0);
+  const lowStock=items.filter(item=>item.availableQuantity<=item.minimumStock).length;
+  return <>
+    <div className="page-heading"><div><div className="eyebrow">INVENTORY MANAGEMENT</div><h1>Bulk Stock</h1><p>Manage accessories by quantity and keep a complete employee issue and return history.</p></div><div className="heading-actions"><button className="btn secondary" onClick={()=>onIssue(null)}><ArrowUpRight size={15}/> Issue stock</button><button className="btn primary" onClick={onAdd}><Plus size={15}/> Add stock item</button></div></div>
+    <div className="stats-grid bulk-stats"><StatCard title="Stock items" value={items.length} sub="Quantity-managed products" icon={Package} tone="blue" onClick={()=>setTab('Stock')}/><StatCard title="Available units" value={totalAvailable} sub="Ready to issue" icon={CircleCheck} tone="green" onClick={()=>setTab('Stock')}/><StatCard title="Issued units" value={totalIssued} sub="Currently with employees" icon={ArrowUpRight} tone="purple" onClick={()=>setTab('History')}/><StatCard title="Low stock" value={lowStock} sub="At or below minimum level" icon={AlertTriangle} tone="orange" onClick={()=>setTab('Stock')}/></div>
+    <div className="panel section-gap"><div className="panel-head"><div><h2>Bulk inventory and issue history</h2><p>Stock quantities update automatically when items are issued or returned.</p></div></div><div className="subtabs"><button className={tab==='Stock'?'selected':''} onClick={()=>setTab('Stock')}>Stock levels <span>{items.length}</span></button><button className={tab==='History'?'selected':''} onClick={()=>setTab('History')}>Issue history <span>{transactions.length}</span></button></div>
+      {tab==='Stock'?<><div className="toolbar"><div className="search-box"><Search size={15}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search by item, category, or location…"/></div><span className="result-count">{filteredItems.length} item(s)</span></div><div className="table-wrap"><table><thead><tr><th>ITEM</th><th>TOTAL</th><th>AVAILABLE</th><th>ISSUED</th><th>DAMAGED</th><th>REPAIR</th><th>LOCATION</th><th>STOCK STATUS</th><th>ACTIONS</th></tr></thead><tbody>{filteredItems.map(item=>{const issued=issuedFor(item);const low=item.availableQuantity<=item.minimumStock;return <tr key={item.id}><td><div className="asset-cell"><div className="asset-icon"><Package size={17}/></div><div><strong>{item.name}</strong><span>{item.tag} · {item.category}{item.brand?` · ${item.brand}`:''}</span></div></div></td><td>{item.totalQuantity}</td><td><strong>{item.availableQuantity}</strong></td><td>{issued}</td><td>{item.damagedQuantity}</td><td>{item.repairQuantity}</td><td>{item.location||'—'}</td><td><Badge value={item.availableQuantity===0?'Out of Stock':low?'Low Stock':'In Stock'}/><small className="warranty-date">Minimum: {item.minimumStock}</small></td><td><div className="row-actions"><button className="btn secondary small" onClick={()=>onRestock(item)} title="Add received stock"><Plus size={13}/> Stock</button><button className="btn primary small" disabled={item.availableQuantity<=0} onClick={()=>onIssue(item)} title="Issue quantity to employee">Issue</button></div></td></tr>})}{filteredItems.length===0&&<tr><td colSpan="9"><div className="empty-state"><div><Package size={22}/></div><strong>No bulk stock items found</strong><p>Add a stock item or change your search.</p></div></td></tr>}</tbody></table></div><div className="table-foot"><span>Issued quantity is calculated from each employee's outstanding issue records.</span><span>Low stock means available units are at or below the configured minimum.</span></div></>:<><div className="toolbar"><div className="search-box"><Search size={15}/><input value={historySearch} onChange={e=>setHistorySearch(e.target.value)} placeholder="Search item, employee, or issuer…"/></div><span className="result-count">{filteredTransactions.length} issue record(s)</span></div><div className="table-wrap"><table><thead><tr><th>ITEM / EMPLOYEE</th><th>ISSUED</th><th>QTY ISSUED</th><th>QTY RETURNED</th><th>OUTSTANDING</th><th>ISSUED BY</th><th>NOTES / RETURNS</th><th>STATUS</th><th>ACTION</th></tr></thead><tbody>{filteredTransactions.map(t=>{const item=items.find(x=>x.id===t.itemId);const employee=employees.find(x=>x.id===t.employeeId);const outstanding=t.quantityIssued-t.quantityReturned;return <tr key={t.id}><td><strong>{item?.name||'Removed stock item'}</strong><small>{employee?.name||'Employee'} · {employee?.employeeId||'—'}</small></td><td>{dateLabel(t.issuedDate)}</td><td>{t.quantityIssued}</td><td>{t.quantityReturned}</td><td><strong>{outstanding}</strong></td><td>{t.issuedBy||'—'}</td><td><span>{t.notes||'—'}</span>{(t.returnEvents||[]).map(event=><small key={event.id}>Returned {event.quantity} · {dateLabel(event.date)} · {event.condition}{event.notes?` · ${event.notes}`:''}</small>)}</td><td><Badge value={outstanding===0?'Completed':'Active'}/></td><td>{outstanding>0?<button className="btn secondary small" onClick={()=>onReturn(t)}><ArrowDownLeft size={13}/> Return</button>:<span className="muted">Complete</span>}</td></tr>})}{filteredTransactions.length===0&&<tr><td colSpan="9"><div className="empty-state"><div><ArrowLeftRight size={22}/></div><strong>No issue history yet</strong><p>Issue stock to an employee to create the first history record.</p></div></td></tr>}</tbody></table></div></>}
+    </div>
+  </>;
+}
+
 function SettingsPage({onReset}) {return <><PageHeading eyebrow="PREFERENCES" title="Settings" description="Manage application data and preferences."/><section className="panel settings-panel"><div className="settings-row"><div><strong>Restore initial records</strong><p>Restore the starting assets, employees and assignments. Saved changes in this browser will be cleared.</p></div><button className="btn secondary" onClick={onReset}><Trash2 size={15}/> Reset data</button></div><div className="settings-row"><div><strong>Data storage</strong><p>Changes are saved automatically on this device.</p></div><Badge value="Enabled"/></div></section></>}
 
 export default App;
