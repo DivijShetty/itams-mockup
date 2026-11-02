@@ -1,176 +1,543 @@
-import React from 'react';
-import { useState } from 'react';
-import { LayoutDashboard, Laptop, Users, ArrowLeftRight, Wrench, FileText, Settings, Plus, Search, Pencil, Check, RotateCcw, X } from 'lucide-react';
-import { initialAssets, initialEmployees, initialAssignments, initialRepairs, emptyAsset, currency, localDateString, readSaved, ASSET_STATUSES, ASSET_CATEGORIES } from './data/seedData';
+import React, { useMemo, useRef, useState } from 'react';
+import {
+  LayoutDashboard, Laptop, Users, ArrowLeftRight, Wrench, FileText, Settings,
+  Search, Plus, Bell, ChevronDown, Monitor, Keyboard, Mouse, Package,
+  CircleCheck, Clock3, AlertTriangle, ShieldCheck, MoreHorizontal, X,
+  Upload, Download, Pencil, Trash2, ArrowUpRight, ArrowDownLeft, Recycle,
+  Banknote, CalendarDays, Filter, Menu, Eye, FileCheck2, CircleHelp
+} from 'lucide-react';
+import { initialAssets, initialEmployees, initialAssignments, emptyAsset, currency, dateLabel, localDateString, readSaved, ASSET_STATUSES, ASSET_CATEGORIES, ASSET_CONDITIONS } from './data/seedData.js';
 
-const nav = [ ['Dashboard',LayoutDashboard], ['Assets',Laptop], ['Employees',Users], ['Assignments',ArrowLeftRight], ['Repairs',Wrench], ['Reports',FileText], ['Settings',Settings] ];
-const emptyEmployee = { employeeId:'', name:'', department:'', email:'', active:true };
-const emptyAssignment = { assetId:'', employeeId:'', notes:'', temporary:false, originalAssetId:'', quantity:1 };
-const emptyRepair = { assetId:'', reportedDate:localDateString(), note:'', cost:'', completedDate:'' };
-const save = (key, value) => localStorage.setItem(key, JSON.stringify(value));
-const active = a => !['Sold','Scrapped','Retired'].includes(a.status);
 
-function Field({ label, children }) { return <label className="field"><span>{label}</span>{children}</label>; }
-function Badge({ children }) { return <span className={'badge '+children.toLowerCase().replaceAll(' ','-')}>{children}</span>; }
-function Modal({ title, close, children }) { return <div className="overlay" onMouseDown={e => e.target === e.currentTarget && close()}><form className="modal" onSubmit={e => { e.preventDefault(); children.props.onSave?.(e); }}><header><h2>{title}</h2><button type="button" className="icon" onClick={close}><X size={18}/></button></header>{children}</form></div>; }
+const nav = [
+  {label:'Dashboard', icon:LayoutDashboard},
+  {label:'Assets', icon:Laptop},
+  {label:'Employees', icon:Users},
+  {label:'Assignments', icon:ArrowLeftRight},
+  {label:'Repairs', icon:Wrench},
+  {label:'Reports', icon:FileText}
+];
 
-export default function App() {
+
+function Badge({value}) {
+  const cls = value.toLowerCase().replaceAll(' ','-');
+  return <span className={`badge ${cls}`}>{value}</span>;
+}
+function StatCard({title,value,sub,icon:Icon,tone,onClick}) {
+  return <button className="stat-card" onClick={onClick} type="button">
+    <div className={`stat-icon ${tone}`}><Icon size={19}/></div>
+    <div className="stat-title">{title}</div><div className="stat-value">{value}</div>
+    <div className="stat-sub">{sub}</div>
+  </button>;
+}
+function Modal({title,children,onClose,wide=false}) {
+  return <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}>
+    <section className={`modal ${wide?'wide':''}`}>
+      <header className="modal-head"><div><h2>{title}</h2><p>Fields marked with * are required.</p></div><button className="icon-button" onClick={onClose}><X size={19}/></button></header>
+      {children}
+    </section>
+  </div>;
+}
+function App() {
   const [assets,setAssets] = useState(()=>readSaved('itam-assets',initialAssets));
   const [employees,setEmployees] = useState(()=>readSaved('itam-employees',initialEmployees));
   const [assignments,setAssignments] = useState(()=>readSaved('itam-assignments',initialAssignments));
-  const [repairs,setRepairs] = useState(()=>readSaved('itam-repairs',initialRepairs));
   const [activity,setActivity] = useState(()=>readSaved('itam-activity',[]));
-  const [page,setPage] = useState('Dashboard'), [search,setSearch] = useState(''), [modal,setModal] = useState('');
-  const [assetStatusFilter,setAssetStatusFilter] = useState('All statuses'), [assetCategoryFilter,setAssetCategoryFilter] = useState('All categories'), [trackingFilter,setTrackingFilter] = useState('All item types');
-  const [assignmentFilter,setAssignmentFilter] = useState('All assignments'), [assignmentTypeFilter,setAssignmentTypeFilter] = useState('All types');
-  const [assignmentAssetStatusFilter,setAssignmentAssetStatusFilter] = useState('All asset statuses'), [assignmentCategoryFilter,setAssignmentCategoryFilter] = useState('All categories'), [assignmentTrackingFilter,setAssignmentTrackingFilter] = useState('All item types');
-  const [assignmentDateFrom,setAssignmentDateFrom] = useState(''), [assignmentDateTo,setAssignmentDateTo] = useState(''), [assignmentDatePreset,setAssignmentDatePreset] = useState('All time');
-  const [assetForm,setAssetForm] = useState(emptyAsset), [employeeForm,setEmployeeForm] = useState(emptyEmployee), [assignmentForm,setAssignmentForm] = useState(emptyAssignment), [repairForm,setRepairForm] = useState(emptyRepair);
-  const [editId,setEditId] = useState(null), [message,setMessage] = useState('');
-  const updateAssets = value => { setAssets(value); save('itam-assets',value); };
-  const updateEmployees = value => { setEmployees(value); save('itam-employees',value); };
-  const updateAssignments = value => { setAssignments(value); save('itam-assignments',value); };
-  const updateRepairs = value => { setRepairs(value); save('itam-repairs',value); };
-  const logActivity = (title, detail, type='update') => {
-    const item = { id: Date.now()+Math.random(), title, detail, type, at: new Date().toISOString() };
-    setActivity(previous => { const next=[item,...previous].slice(0,30); save('itam-activity',next); return next; });
-  };
-  const applyAssignmentDatePreset = preset => {
-    setAssignmentDatePreset(preset);
-    const end = new Date();
-    const today = localDateString();
-    if (preset === 'All time') {
-      const dates = assignments.map(a=>a.assignedDate).filter(Boolean).sort();
-      setAssignmentDateFrom(dates[0] || ''); setAssignmentDateTo(today);
-    } else if (preset === 'Last 2 days' || preset === 'Last week' || preset === 'Last month') {
-      if (preset === 'Last 2 days') end.setDate(end.getDate()-2);
-      if (preset === 'Last week') end.setDate(end.getDate()-7);
-      if (preset === 'Last month') end.setMonth(end.getMonth()-1);
-      const from = `${end.getFullYear()}-${String(end.getMonth()+1).padStart(2,'0')}-${String(end.getDate()).padStart(2,'0')}`;
-      setAssignmentDateFrom(from); setAssignmentDateTo(today);
-    }
-  };
-  const repairTotal = id => repairs.filter(r=>r.assetId===id).reduce((sum,r)=>sum+Number(r.cost||0),0);
-  const notify = text => { setMessage(text); setTimeout(()=>setMessage(''),2500); };
-  const employee = id => employees.find(e=>e.id===Number(id));
-  const asset = id => assets.find(a=>a.id===Number(id));
-  const current = id => assignments.find(a=>a.assetId===id&&!a.returnedDate);
-  const openAsset = item => { setEditId(item?.id ?? null); setAssetForm(item ? {...emptyAsset,...item} : {...emptyAsset,tag:`AST-${String(Math.max(0,...assets.map(a=>a.id))+1).padStart(3,'0')}`}); setModal('asset'); };
-  const saveAsset = () => {
-    if (!assetForm.tag.trim() || !assetForm.name.trim()) return notify('Enter an asset tag and name.');
-    if (assetForm.status==='Assigned' && !employees.some(e=>e.id===Number(assetForm.employeeId)&&e.active)) return notify('Choose an active employee for this asset.');
-    if (assets.some(a=>a.tag.toLowerCase()===assetForm.tag.toLowerCase()&&a.id!==editId)) return notify('Asset tag already exists.');
-    const item = {...assetForm,id:editId||Math.max(0,...assets.map(a=>a.id))+1,purchasePrice:Number(assetForm.purchasePrice||0),maintenanceCost:repairTotal(editId||0), quantityTracked:!!assetForm.quantityTracked, quantity:Math.max(0,Number(assetForm.quantity||1)), availableQuantity:Math.max(0,Number(assetForm.availableQuantity??assetForm.quantity??1)),employeeId:assetForm.status==='Assigned'?Number(assetForm.employeeId)||null:null};
-    updateAssets(editId?assets.map(a=>a.id===editId?item:a):[item,...assets]); logActivity(editId?'Asset updated':'Asset added',`${item.tag} · ${item.name}`,'asset'); setModal(''); notify('Asset saved.');
-  };
-  const openEmployee = item => { setEditId(item?.id??null); setEmployeeForm(item?{...item}:{...emptyEmployee}); setModal('employee'); };
-  const saveEmployee = () => {
-    if (!employeeForm.employeeId.trim()||!employeeForm.name.trim()) return notify('Employee ID and name are required.');
-    if (employees.some(e=>e.employeeId.toLowerCase()===employeeForm.employeeId.toLowerCase()&&e.id!==editId)) return notify('Employee ID already exists.');
-    if (editId) updateEmployees(employees.map(e=>e.id===editId?employeeForm:e));
-    else updateEmployees([{...employeeForm,id:Math.max(0,...employees.map(e=>e.id))+1},...employees]);
-    logActivity(editId?'Employee updated':'Employee added',`${employeeForm.employeeId} · ${employeeForm.name}`,'employee'); setModal(''); notify('Employee saved.');
-  };
-  const openAssignment = item => { setEditId(null); setAssignmentForm({...emptyAssignment,assetId:item?.id||'',assignedDate:localDateString(),quantity:1}); setModal('assignment'); };
-  const openRepair = item => { setRepairForm({...emptyRepair,assetId:item.id,reportedDate:localDateString()}); setModal('repair'); };
-  const saveAssignment = () => {
-    const a=asset(assignmentForm.assetId), e=employee(assignmentForm.employeeId);
-    if (!a||!e) return notify('Choose an asset and employee.');
-    if (!e.active) return notify('Choose an active employee.');
-    if (a.quantityTracked) { if (Number(assignmentForm.quantity)<1 || Number(assignmentForm.quantity)>Number(a.availableQuantity)) return notify('Enter a quantity within available stock.'); } else if (a.status!=='Available'||current(a.id)) return notify('Only available assets can be assigned.');
-    if (assignmentForm.temporary) {
-      const original=asset(assignmentForm.originalAssetId);
-      if (!original||original.status!=='Under Repair'||Number(original.employeeId)!==e.id) return notify('Choose this employee’s laptop that is under repair.');
-    }
-    const row={id:Math.max(0,...assignments.map(x=>x.id))+1,assetId:a.id,employeeId:e.id,assignedDate:localDateString(),returnedDate:'',notes:assignmentForm.notes,isTemporary:!!assignmentForm.temporary,originalAssetId:Number(assignmentForm.originalAssetId)||null,quantity:a.quantityTracked?Number(assignmentForm.quantity):1};
-    updateAssignments([row,...assignments]); updateAssets(assets.map(x=>x.id!==a.id?x:a.quantityTracked?{...x,availableQuantity:Number(x.availableQuantity)-Number(row.quantity)}:{...x,status:'Assigned',employeeId:e.id})); logActivity('Asset assigned',`${a.tag} · ${a.name} → ${e.name}${a.quantityTracked?` · Qty ${row.quantity}`:''}${row.isTemporary?' · Temporary replacement':''}`,'assignment'); setModal(''); setPage('Assignments'); notify('Asset assigned.');
-  };
-  const returnAsset = row => {
-    updateAssignments(assignments.map(x=>x.id===row.id?{...x,returnedDate:localDateString()}:x));
-    updateAssets(assets.map(x=>x.id!==row.assetId?x: x.quantityTracked?{...x,availableQuantity:Number(x.availableQuantity||0)+Number(row.quantity||1)}:{...x,status:'Available',employeeId:null})); const returnedAsset=asset(row.assetId); logActivity('Asset returned',`${returnedAsset?.tag||'Asset'} · ${returnedAsset?.name||''} ← ${employee(row.employeeId)?.name||'Employee'}`,'return'); notify('Asset returned.');
-  };
-  const changeStatus = (item,status) => {
-    if (status==='Assigned') return openAssignment(item);
-    if (status==='Under Repair') { openRepair(item); return; } else {
-      updateAssets(assets.map(a=>a.id===item.id?{...a,status,employeeId:null,repairCompletedDate:status==='Available'&&item.status==='Under Repair'?localDateString():a.repairCompletedDate}:a));
-      updateAssignments(assignments.map(a=>a.assetId===item.id&&!a.returnedDate?{...a,returnedDate:localDateString()}:a));
-    }
-    logActivity('Asset status changed',`${item.tag} · ${item.name}: ${item.status} → ${status}`,'status');
-    notify('Asset status updated.');
-  };
-  const saveRepair = () => {
-    const a=asset(repairForm.assetId);
-    if (!a || !repairForm.reportedDate || !repairForm.note.trim()) return notify('Choose an asset and enter repair date and issue/note.');
-    const row={id:Math.max(0,...repairs.map(r=>r.id))+1,assetId:a.id,employeeId:Number(a.employeeId)||null,reportedDate:repairForm.reportedDate,note:repairForm.note,cost:Number(repairForm.cost||0),completedDate:repairForm.completedDate||''};
-    updateRepairs([row,...repairs]);
-    logActivity('Repair recorded',`${a.tag} · ${a.name} · ${row.note} · ₹${row.cost}`,'repair');
-    if (!row.completedDate) {
-      updateAssets(assets.map(x=>x.id===a.id?{...x,status:'Under Repair',employeeId:x.employeeId}:x));
-      updateAssignments(assignments.map(x=>x.assetId===a.id&&!x.returnedDate?{...x,returnedDate:localDateString(),notes:(x.notes?x.notes+'; ':'')+'Closed for repair'}:x));
-    } else if (a.status==='Under Repair') updateAssets(assets.map(x=>x.id===a.id?{...x,status:'Available',employeeId:null}:x));
-    setModal(''); notify('Repair record saved.');
-  };
-  const completeRepair = row => {
-    const cost=prompt('Cost for this repair (₹):',String(row.cost||0));
-    if (cost===null || !Number.isFinite(Number(cost)) || Number(cost)<0) return;
-    updateRepairs(repairs.map(r=>r.id===row.id?{...r,cost:Number(cost),completedDate:localDateString()}:r));
-    updateAssets(assets.map(a=>a.id===row.assetId?{...a,status:'Available',employeeId:null,repairCompletedDate:localDateString()}:a));
-    notify('Repair completed and cost recorded.');
-  };
-  const hasActiveStockAssignment = id => assignments.some(x=>x.assetId===id&&!x.returnedDate);
-  const matchesAssetStatus = a => assetStatusFilter==='All statuses' || (assetStatusFilter==='Available'?(a.quantityTracked?Number(a.availableQuantity||0)>0:a.status==='Available'):(assetStatusFilter==='Assigned'?(a.quantityTracked?hasActiveStockAssignment(a.id):a.status==='Assigned'):a.status===assetStatusFilter));
-  const filtered = assets.filter(a=>[a.tag,a.name,a.category,a.status,a.brand,a.serial,employee(a.employeeId)?.name].some(v=>(v||'').toLowerCase().includes(search.toLowerCase())) && matchesAssetStatus(a) && (assetCategoryFilter==='All categories'||a.category===assetCategoryFilter) && (trackingFilter==='All item types'||(trackingFilter==='Stock items'?a.quantityTracked:trackingFilter==='Individual assets'?!a.quantityTracked:true)));
-  const filteredAssignments = assignments.filter(a=>{const item=asset(a.assetId);const query=[item?.tag,item?.name,item?.category,item?.status,item?.brand,item?.serial,employee(a.employeeId)?.name,employee(a.employeeId)?.employeeId].some(v=>(v||'').toLowerCase().includes(search.toLowerCase()));return query && (assignmentFilter==='All assignments'||(assignmentFilter==='Currently assigned'?!a.returnedDate:!!a.returnedDate)) && (assignmentTypeFilter==='All types'||(assignmentTypeFilter==='Temporary'?a.isTemporary:!a.isTemporary)) && (assignmentAssetStatusFilter==='All asset statuses'||item?.status===assignmentAssetStatusFilter) && (assignmentCategoryFilter==='All categories'||item?.category===assignmentCategoryFilter) && (assignmentTrackingFilter==='All item types'||(assignmentTrackingFilter==='Stock items'?item?.quantityTracked:assignmentTrackingFilter==='Individual assets'?!item?.quantityTracked:true)) && (!assignmentDateFrom||(a.assignedDate||'')>=assignmentDateFrom) && (!assignmentDateTo||(a.assignedDate||'')<=assignmentDateTo);});
-  const goToAssetStatus = status => { setAssetStatusFilter(status); setAssetCategoryFilter('All categories'); setTrackingFilter('All item types'); setSearch(''); setPage('Assets'); };
-  const goToAssetCategory = category => { setAssetCategoryFilter(category); setAssetStatusFilter('All statuses'); setTrackingFilter('All item types'); setSearch(''); setPage('Assets'); };
-  const stats = [
-    ['Total assets',assets.filter(active).length],['Available',assets.filter(a=>a.status==='Available').length],['Assigned',assets.filter(a=>a.status==='Assigned').length],['Under repair',assets.filter(a=>a.status==='Under Repair').length],['Missing',assets.filter(a=>a.status==='Missing').length],
-  ];
-  const table = (headers, rows) => <div className="table-wrap"><table><thead><tr>{headers.map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{rows.length?rows:<tr><td colSpan={headers.length} className="empty">No records found.</td></tr>}</tbody></table></div>;
-  const assetRows = items => items.map(a=><tr key={a.id}><td><b>{a.tag}</b><small>{a.serial||'No serial number'}</small></td><td>{a.name}<small>{a.brand} {a.model}</small></td><td>{a.category}<small>{a.quantityTracked?'Bulk · '+a.availableQuantity+'/'+a.quantity+' available':'Individually tracked'}</small></td><td><Badge>{a.status}</Badge></td><td>{employee(a.employeeId)?.name||'—'}</td><td>{currency(a.purchasePrice)}</td><td>{!a.quantityTracked&&<select aria-label="Change status" value={a.status} onChange={e=>changeStatus(a,e.target.value)}>{ASSET_STATUSES.map(s=><option key={s}>{s}</option>)}</select>} <button className="icon" onClick={()=>openAsset(a)} title="Edit"><Pencil size={15}/></button></td></tr>);
+  const [page,setPage] = useState('Dashboard');
+  const [query,setQuery] = useState('');
+  const [statusFilter,setStatusFilter] = useState('All statuses');
+  const [categoryFilter,setCategoryFilter] = useState('All categories');
+  const [modal,setModal] = useState(null);
+  const [editingAsset,setEditingAsset] = useState(null);
+  const [assetForm,setAssetForm] = useState(emptyAsset);
+  const [employeeForm,setEmployeeForm] = useState({employeeId:'',name:'',department:'',email:'',active:true});
+  const [editingEmployeeId,setEditingEmployeeId] = useState(null);
+  const [assignmentForm,setAssignmentForm] = useState({assetId:'',employeeId:'',assignedDate:localDateString(),notes:'',isTemporary:false,originalAssetId:'',temporaryReason:'Original laptop under repair'});
+  const [repairForm,setRepairForm] = useState({description:'',reportedDate:localDateString(),vendor:'',cost:''});
+  const [returnForm,setReturnForm] = useState({returnedDate:localDateString(),nextStatus:'Available',notes:'',repairDescription:'',repairVendor:'',repairCost:''});
+  const [returningAssignment,setReturningAssignment] = useState(null);
+  const [selectedAsset,setSelectedAsset] = useState(null);
+  const [toast,setToast] = useState('');
+  const invoiceRef = useRef(null);
+  const warrantyRef = useRef(null);
 
-  return <div className="layout"><aside><div className="brand"><span>IT</span><div><b>AssetFlow</b><small>ASSET MANAGEMENT</small></div></div><nav>{nav.map(([label,Icon])=><button key={label} className={page===label?'selected':''} onClick={()=>{setPage(label);setSearch(''); if(label==='Assets'){setAssetStatusFilter('All statuses');setAssetCategoryFilter('All categories');setTrackingFilter('All item types')} if(label==='Assignments'){setAssignmentFilter('All assignments');setAssignmentTypeFilter('All types');setAssignmentAssetStatusFilter('All asset statuses');setAssignmentCategoryFilter('All categories');setAssignmentTrackingFilter('All item types');setAssignmentDateFrom('');setAssignmentDateTo('')}}}><Icon size={18}/>{label}</button>)}</nav><div className="side-note">IT Asset Management<br/><small>Frontend demo · Sample data</small></div></aside>
-    <main><div className="topbar"><div><small>WORKSPACE / {page.toUpperCase()}</small><h1>{page}</h1></div><span className="user-chip">IT <b>Admin</b></span></div>
-      {page==='Dashboard'&&<>
-        <div className="welcome"><div><h2>Inventory</h2><p>See what equipment you have, where it is, and what needs attention.</p></div><button className="primary" onClick={()=>openAsset()}><Plus size={16}/> Add item</button></div>
-        <div className="stats dashboard-stats">
-          <div className="stat"><span>Individual assets</span><strong>{assets.filter(a=>!a.quantityTracked&&active(a)).length}</strong><small>Laptops, desktops, monitors</small></div>
-          <div className="stat"><span>Stock units</span><strong>{assets.filter(a=>a.quantityTracked&&active(a)).reduce((n,a)=>n+Number(a.quantity||0),0)}</strong><small>Mice, keyboards, cables, etc.</small></div>
-          <div className="stat"><span>Available stock units</span><strong>{assets.filter(a=>a.quantityTracked&&active(a)).reduce((n,a)=>n+Number(a.availableQuantity||0),0)}</strong><small>Ready to issue</small></div>
-          <div className="stat"><span>Current repairs</span><strong>{assets.filter(a=>a.status==='Under Repair').length}</strong><small>Items needing attention</small></div>
-        </div>
-        <div className="dashboard-grid">
-          <section className="panel"><div className="panel-title"><div><h2>Inventory by category</h2><p>Understand what types of items you own</p></div><button className="text-button" onClick={()=>setPage('Assets')}>View inventory →</button></div>
-            {ASSET_CATEGORIES.map(category=>{const items=assets.filter(a=>a.category===category&&active(a));const count=items.reduce((n,a)=>n+(a.quantityTracked?Number(a.quantity||0):1),0);const max=Math.max(1,...ASSET_CATEGORIES.map(c=>assets.filter(a=>a.category===c&&active(a)).reduce((n,a)=>n+(a.quantityTracked?Number(a.quantity||0):1),0)));return count>0?<button className="category-row" key={category} onClick={()=>goToAssetCategory(category)}><span className="category-label">{category}<small>{items.length} stock record{items.length===1?'':'s'}</small></span><span className="bar-track"><span className="bar-fill" style={{width:`${count/max*100}%`}} /></span><b>{count}</b></button>:null})}
-          </section>
-          <section className="panel"><div className="panel-title"><div><h2>Current status</h2><p>Where your inventory stands today</p></div></div>
-            {['Available','Assigned','Under Repair','Missing','Retired','Sold','Scrapped'].map(status=>{const count=status==='Available'?assets.reduce((n,a)=>n+(!active(a)?0:a.quantityTracked?Number(a.availableQuantity||0):a.status==='Available'?1:0),0):status==='Assigned'?assets.reduce((n,a)=>n+(!a.quantityTracked&&a.status==='Assigned'?1:0),assignments.filter(x=>!x.returnedDate&&asset(x.assetId)?.quantityTracked).reduce((sum,x)=>sum+Number(x.quantity||1),0)):assets.filter(a=>!a.quantityTracked&&a.status===status).length;const total=Math.max(1,assets.filter(a=>!['Sold','Scrapped','Retired'].includes(a.status)).reduce((n,a)=>n+(a.quantityTracked?Number(a.quantity||0):1),0));return <button className="status-row" key={status} onClick={()=>goToAssetStatus(status)}><span><Badge>{status}</Badge></span><span className="bar-track"><span className={'bar-fill status-'+status.toLowerCase().replaceAll(' ','-')} style={{width:`${Math.min(100,count/total*100)}%`}} /></span><b>{count}</b></button>})}
-            <div className="dashboard-note">Stock quantities show units; individual equipment is counted as one item per asset record.</div>
-          </section>
-        </div>
-        <section className="panel"><div className="panel-title"><div><h2>Recently added items</h2><p>Latest records in your inventory</p></div><button className="text-button" onClick={()=>setPage('Assets')}>View all →</button></div>{table(['Asset / stock code','Name','Category','Status','Assigned to','Purchase price','Actions'],assetRows([...assets].sort((a,b)=>b.id-a.id).slice(0,5)))}</section>
-        <section className="panel"><div className="panel-title"><div><h2>Recent activity</h2><p>Latest changes across assets, assignments, employees, and repairs</p></div><button className="text-button" onClick={()=>{setPage('Assignments');setAssignmentFilter('All assignments')}}>View assignments →</button></div>{activity.length ? <div className="activity-list">{activity.slice(0,8).map(item=><div className="activity-item" key={item.id}><span className={'activity-dot activity-'+item.type}></span><div className="activity-copy"><b>{item.title}</b><p>{item.detail}</p></div><time>{new Date(item.at).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</time></div>)}</div> : <div className="activity-list">{[...assignments.map(a=>({id:'a'+a.id,title:a.returnedDate?'Assignment returned':'Asset assigned',detail:`${asset(a.assetId)?.tag||'Asset'} · ${asset(a.assetId)?.name||''} · ${employee(a.employeeId)?.name||'Employee'}`,at:a.returnedDate?`${a.returnedDate}T12:00:00`:`${a.assignedDate||localDateString()}T12:00:00`,type:'assignment'})),...repairs.map(r=>({id:'r'+r.id,title:'Repair recorded',detail:`${asset(r.assetId)?.tag||'Asset'} · ${r.note} · ₹${r.cost||0}`,at:`${r.reportedDate||localDateString()}T12:00:00`,type:'repair'}))].sort((a,b)=>new Date(b.at)-new Date(a.at)).slice(0,8).map(item=><div className="activity-item" key={item.id}><span className={'activity-dot activity-'+item.type}></span><div className="activity-copy"><b>{item.title}</b><p>{item.detail}</p></div><time>{new Date(item.at).toLocaleDateString([], {month:'short',day:'numeric',year:'numeric'})}</time></div>)}{!assignments.length&&!repairs.length&&<p className="empty">No activity yet. Add an asset, make an assignment, or record a repair to see activity here.</p>}</div>}</section>
-      </>}
-      {page==='Assets'&&<section className="panel"><div className="panel-title"><div><h2>Asset inventory</h2><p>{assets.length} total records, including disposed assets</p></div><button className="primary" onClick={()=>openAsset()}><Plus size={16}/> Add asset</button></div><div className="toolbar filter-toolbar"><label className="search"><Search size={17}/><input placeholder="Search assets..." value={search} onChange={e=>setSearch(e.target.value)}/></label><select aria-label="Filter by status" value={assetStatusFilter} onChange={e=>setAssetStatusFilter(e.target.value)}><option>All statuses</option>{ASSET_STATUSES.map(s=><option key={s}>{s}</option>)}</select><select aria-label="Filter by category" value={assetCategoryFilter} onChange={e=>setAssetCategoryFilter(e.target.value)}><option>All categories</option>{ASSET_CATEGORIES.map(c=><option key={c}>{c}</option>)}</select><select aria-label="Filter by item type" value={trackingFilter} onChange={e=>setTrackingFilter(e.target.value)}><option>All item types</option><option>Individual assets</option><option>Stock items</option></select><button className="secondary small" onClick={()=>{setSearch('');setAssetStatusFilter('All statuses');setAssetCategoryFilter('All categories');setTrackingFilter('All item types')}}>Clear filters</button></div>{table(['Asset','Name','Category','Status','Assigned to','Purchase price','Actions'],assetRows(filtered))}</section>}
-      {page==='Employees'&&<section className="panel"><div className="panel-title"><div><h2>Employees</h2><p>People who can be assigned equipment</p></div><button className="primary" onClick={()=>openEmployee()}><Plus size={16}/> Add employee</button></div>{table(['Employee ID','Name','Department','Email','Status','Actions'],employees.map(e=><tr key={e.id}><td><b>{e.employeeId}</b></td><td>{e.name}</td><td>{e.department||'—'}</td><td>{e.email||'—'}</td><td><Badge>{e.active?'Active':'Inactive'}</Badge></td><td><button className="icon" onClick={()=>openEmployee(e)}><Pencil size={15}/></button><button className="secondary small" onClick={()=>{if(!e.active&&assignments.some(a=>a.employeeId===e.id&&!a.returnedDate))return notify('Return assigned assets first.');updateEmployees(employees.map(x=>x.id===e.id?{...x,active:!x.active}:x));}}>{e.active?'Deactivate':'Activate'}</button></td></tr>))}</section>}
-      {page==='Assignments'&&<section className="panel"><div className="panel-title"><div><h2>Asset assignments</h2><p>Search by employee name, employee ID, asset tag, or asset name.</p></div><button className="primary" onClick={()=>openAssignment()}><Plus size={16}/> Assign asset</button></div><div className="toolbar filter-toolbar"><label className="search"><Search size={17}/><input placeholder="Search employee, asset, tag, serial..." value={search} onChange={e=>setSearch(e.target.value)}/></label><select aria-label="Filter assignment status" value={assignmentFilter} onChange={e=>setAssignmentFilter(e.target.value)}><option>All assignments</option><option>Currently assigned</option><option>Returned</option></select><select aria-label="Filter asset status" value={assignmentAssetStatusFilter} onChange={e=>setAssignmentAssetStatusFilter(e.target.value)}><option>All asset statuses</option>{ASSET_STATUSES.map(s=><option key={s}>{s}</option>)}</select><select aria-label="Filter by category" value={assignmentCategoryFilter} onChange={e=>setAssignmentCategoryFilter(e.target.value)}><option>All categories</option>{ASSET_CATEGORIES.map(c=><option key={c}>{c}</option>)}</select><select aria-label="Filter by item type" value={assignmentTrackingFilter} onChange={e=>setAssignmentTrackingFilter(e.target.value)}><option>All item types</option><option>Individual assets</option><option>Stock items</option></select><select aria-label="Filter assignment type" value={assignmentTypeFilter} onChange={e=>setAssignmentTypeFilter(e.target.value)}><option>All types</option><option>Regular</option><option>Temporary</option></select><select aria-label="Assignment date range" value={assignmentDatePreset} onChange={e=>applyAssignmentDatePreset(e.target.value)}><option>All time</option><option>Last 2 days</option><option>Last week</option><option>Last month</option><option>Custom range</option></select><label className="date-filter"><span>From date</span><input type="date" aria-label="Assigned from date" value={assignmentDateFrom} onChange={e=>{setAssignmentDatePreset('Custom range');setAssignmentDateFrom(e.target.value)}}/></label><label className="date-filter"><span>To date</span><input type="date" aria-label="Assigned to date" value={assignmentDateTo} onChange={e=>{setAssignmentDatePreset('Custom range');setAssignmentDateTo(e.target.value)}}/></label><button className="secondary small" onClick={()=>{setSearch('');setAssignmentFilter('All assignments');setAssignmentTypeFilter('All types');setAssignmentAssetStatusFilter('All asset statuses');setAssignmentCategoryFilter('All categories');setAssignmentTrackingFilter('All item types');applyAssignmentDatePreset('All time')}}>Clear filters</button></div>{table(['Asset','Employee','Quantity','Assigned date','Returned date','Type','Notes','Actions'],filteredAssignments.map(a=><tr key={a.id}><td><b>{asset(a.assetId)?.tag||'—'}</b><small>{asset(a.assetId)?.name}</small></td><td>{employee(a.employeeId)?.name||'—'}<small>{employee(a.employeeId)?.employeeId}</small></td><td>{a.quantity||1}</td><td>{a.assignedDate||'—'}</td><td>{a.returnedDate||<Badge>Active</Badge>}</td><td>{a.isTemporary?'Temporary':'Regular'}</td><td>{a.notes||'—'}</td><td>{!a.returnedDate&&<button className="secondary small" onClick={()=>returnAsset(a)}><RotateCcw size={14}/> Return</button>}</td></tr>))}</section>}
-      {page==='Repairs'&&<section className="panel"><div className="panel-title"><div><h2>Repair history & costs</h2><p>Every repair has a date, issue/note, cost, and completion date. Lifetime cost is the sum of all repair records.</p></div><button className="primary" onClick={()=>{const a=assets.find(x=>x.status==='Under Repair')||assets[0];if(a)openRepair(a)}}><Plus size={16}/> Add repair</button></div><div className="stats"><div className="stat"><span>Current repairs</span><strong>{assets.filter(a=>a.status==='Under Repair').length}</strong></div><div className="stat"><span>Lifetime repair cost</span><strong>{currency(repairs.reduce((n,r)=>n+Number(r.cost||0),0))}</strong></div></div>{table(['Asset','Employee','Reported date','Repair note','Current cost','Completed','Lifetime cost','Action'],repairs.map(r=><tr key={r.id}><td><b>{asset(r.assetId)?.tag||'—'}</b><small>{asset(r.assetId)?.name}</small></td><td>{employee(r.employeeId)?.name||'—'}</td><td>{r.reportedDate||'—'}</td><td>{r.note}</td><td>{currency(r.cost)}</td><td>{r.completedDate||<Badge>In progress</Badge>}</td><td>{currency(repairTotal(r.assetId))}</td><td>{!r.completedDate&&<button className="secondary small" onClick={()=>completeRepair(r)}><Check size={14}/> Complete</button>}</td></tr>))}</section>}
-      {page==='Reports'&&<section className="panel"><div className="panel-title"><div><h2>Asset reports</h2><p>Quick inventory summary</p></div><button className="secondary" onClick={()=>{const csv=['Tag,Name,Category,Status,Purchase Price,Employee',...assets.map(a=>[a.tag,a.name,a.category,a.status,a.purchasePrice,employee(a.employeeId)?.name||''].map(v=>`"${String(v).replaceAll('"','""')}"`).join(','))].join('\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));const link=document.createElement('a');link.href=url;link.download='asset-report.csv';link.click();URL.revokeObjectURL(url)}}>Export CSV</button></div><div className="report-grid">{stats.map(([name,value])=><div className="report-card" key={name}><span>{name}</span><b>{value}</b></div>)}</div><h3>Assets by status</h3>{table(['Status','Count'],ASSET_STATUSES.map(s=><tr key={s}><td><Badge>{s}</Badge></td><td>{assets.filter(a=>a.status===s).length}</td></tr>))}</section>}
-      {page==='Settings'&&<section className="panel settings"><h2>Mockup settings</h2><p>Your changes are stored in this browser only. No Django API is connected.</p><button className="secondary" onClick={()=>{if(confirm('Reset all mockup data to the original sample records?')){['itam-assets','itam-employees','itam-assignments','itam-repairs'].forEach(k=>localStorage.removeItem(k));location.reload()}}}>Reset sample data</button></section>}
+  const persistAssets = next => { setAssets(next); localStorage.setItem('itam-assets',JSON.stringify(next)); };
+  const persistEmployees = next => { setEmployees(next); localStorage.setItem('itam-employees',JSON.stringify(next)); };
+  const persistAssignments = next => { setAssignments(next); localStorage.setItem('itam-assignments',JSON.stringify(next)); };
+  const notify = msg => { setToast(msg); setTimeout(()=>setToast(''),2800); };
+  const logActivity = (type,title,detail='') => { const entry={id:Date.now(),type,title,detail,date:new Date().toISOString()}; const next=[entry,...activity].slice(0,30); setActivity(next); localStorage.setItem('itam-activity',JSON.stringify(next)); };
+  const today = new Date(); today.setHours(0,0,0,0);
+  const inThirtyDays = new Date(today); inThirtyDays.setDate(today.getDate()+30);
+  const warrantyStatus = asset => {
+    if(!asset.warrantyExpiry) return 'Not recorded';
+    const expiry=new Date(asset.warrantyExpiry+'T00:00:00');
+    if(expiry<today) return 'Expired';
+    if(expiry<=inThirtyDays) return 'Expiring soon';
+    return 'Active';
+  };
+  const expiring = assets.filter(a=>!['Sold','Scrapped','Retired'].includes(a.status)&&warrantyStatus(a)==='Expiring soon');
+  const expired = assets.filter(a=>!['Sold','Scrapped','Retired'].includes(a.status)&&warrantyStatus(a)==='Expired');
+  const warrantyUnrecorded = assets.filter(a=>!['Sold','Scrapped','Retired'].includes(a.status)&&warrantyStatus(a)==='Not recorded');
+  const currentEmployee = asset => (['Assigned','Under Repair'].includes(asset.status) && asset.employeeId) ? employees.find(e=>e.id===asset.employeeId) : undefined;
+  const activeAssignment = assetId => assignments.find(a=>a.assetId===assetId&&!a.returnedDate);
+  const filteredAssets = useMemo(()=>assets.filter(a=>{
+    const q=query.toLowerCase();
+    const matches = [a.tag,a.name,a.brand,a.model,a.serial,currentEmployee(a)?.name].some(v=>(v||'').toLowerCase().includes(q));
+    return matches && (statusFilter==='All statuses'||a.status===statusFilter) && (categoryFilter==='All categories'||a.category===categoryFilter);
+  }),[assets,query,statusFilter,categoryFilter,employees]);
+  const counts = {
+    total:assets.filter(a=>!['Sold','Scrapped','Retired'].includes(a.status)).length,
+    available:assets.filter(a=>a.status==='Available').length,
+    assigned:assets.filter(a=>a.status==='Assigned').length,
+    repair:assets.filter(a=>a.status==='Under Repair').length,
+    missing:assets.filter(a=>a.status==='Missing').length,
+  };
+  const resetAssetForm = () => { setEditingAsset(null); setAssetForm({...emptyAsset,tag:`AST-${String(Math.max(0,...assets.map(a=>a.id))+1).padStart(3,'0')}`}); setModal('asset'); };
+  const editAsset = asset => {
+    setEditingAsset(asset.id);
+    setAssetForm({...emptyAsset,...asset,employeeId:asset.employeeId||'',purchasePrice:String(asset.purchasePrice??''),maintenanceCost:String(asset.maintenanceCost??'')});
+    setModal('asset');
+  };
+  const saveAsset = e => {
+    e.preventDefault();
+    const tag=assetForm.tag.trim();
+    const name=assetForm.name.trim();
+    if(!tag||!name){notify('Asset tag and asset name are required.');return;}
+    if(assets.some(a=>a.tag.toLowerCase()===tag.toLowerCase()&&a.id!==editingAsset)){
+      notify('That asset tag is already in use.');return;
+    }
+    const old=assets.find(a=>a.id===editingAsset);
+    const employeeId=assetForm.status==='Assigned' ? (Number(assetForm.employeeId)||null) : (assetForm.status==='Under Repair' ? (old?.employeeId||Number(assetForm.employeeId)||null) : null);
+    if(assetForm.status==='Assigned'&&!employeeId){notify('Choose an employee before assigning this asset.');return;}
+    if(assetForm.status==='Assigned'&&!employees.some(emp=>emp.id===employeeId&&emp.active)){notify('Only active employees can receive assets.');return;}
+    const existingActive=activeAssignment(editingAsset);
+    if(assetForm.status==='Assigned' && assignments.some(a=>a.assetId===(editingAsset||-1)&&!a.returnedDate&&a.id!==existingActive?.id)){
+      notify('This asset already has an active assignment. Return it before assigning again.');return;
+    }
+    const nextAsset={...assetForm,id:editingAsset||Math.max(0,...assets.map(a=>a.id))+1,tag,name,purchasePrice:Number(assetForm.purchasePrice||0),maintenanceCost:Number(assetForm.maintenanceCost||0),employeeId,repairReportedDate:assetForm.status==='Under Repair'?(old?.repairReportedDate||localDateString()):old?.repairReportedDate||'',repairCompletedDate:assetForm.status==='Under Repair'?'':(old?.status==='Under Repair'?localDateString():(old?.repairCompletedDate||''))};
+    let nextAssignments=[...assignments];
+    const active=nextAssignments.find(a=>a.assetId===nextAsset.id&&!a.returnedDate);
+    const todayString=localDateString();
+    if(active && (nextAsset.status!=='Assigned'||active.employeeId!==nextAsset.employeeId)){
+      nextAssignments=nextAssignments.map(a=>a.id===active.id?{...a,returnedDate:todayString,notes:[a.notes,'Closed after asset details/status change'].filter(Boolean).join(' · ')}:a);
+    }
+    if(nextAsset.status==='Assigned'&&nextAsset.employeeId&&(!active||active.employeeId!==nextAsset.employeeId)){
+      nextAssignments=[{id:Math.max(0,...nextAssignments.map(a=>a.id))+1,assetId:nextAsset.id,employeeId:nextAsset.employeeId,assignedDate:todayString,returnedDate:'',notes:'Assignment created from asset details',isTemporary:false},...nextAssignments];
+    }
+    persistAssets(editingAsset?assets.map(a=>a.id===editingAsset?nextAsset:a):[nextAsset,...assets]);
+    logActivity('asset',editingAsset?'Asset updated':'Asset added',`${nextAsset.tag} · ${nextAsset.name}`);
+    if(nextAssignments.some((a,i)=>a!==assignments[i])||nextAssignments.length!==assignments.length)persistAssignments(nextAssignments);
+    setModal(null);notify(editingAsset?'Asset updated.':'Asset added.');
+  };
+  const markStatus = (asset,status) => {
+    if(status===asset.status)return;
+    // Any status change from an assigned asset must first close its assignment
+    // through the return workflow, where IT confirms the asset's next status.
+    if(asset.status==='Assigned'){
+      const active=activeAssignment(asset.id);
+      if(active){openReturnDialog(active,status);return;}
+    }
+    if(status==='Assigned'){
+      if(asset.status!=='Available'){notify('Only available assets can be assigned.');return;}
+      setAssignmentForm({assetId:String(asset.id),employeeId:'',assignedDate:localDateString(),notes:'',isTemporary:false,originalAssetId:'',temporaryReason:'Original laptop under repair'});
+      setModal('assign');return;
+    }
+    if(status==='Under Repair'){
+      setSelectedAsset(asset);setRepairForm({description:asset.notes||'',reportedDate:asset.repairReportedDate||localDateString(),vendor:asset.vendor||'',cost:String(asset.currentRepairCost??(asset.repairHistory||[]).find(r=>!r.completedDate)?.cost??'')});setModal('repair');return;
+    }
+    if(status==='Available'&&asset.status==='Under Repair'){
+      completeRepair(asset);return;
+    }
+    const todayString=localDateString();
+    const next=assets.map(a=>a.id===asset.id?{...a,status,employeeId:null}:a);
+    const nextAssignments=assignments.map(a=>a.assetId===asset.id&&!a.returnedDate?{...a,returnedDate:todayString,notes:[a.notes,({Sold:'Closed on sale',Scrapped:'Closed on scrap',Retired:'Closed on retirement',Missing:'Asset marked missing',Available:'Asset returned'}[status]||`Closed after status changed to ${status}`)].filter(Boolean).join(' · ')}:a);
+    persistAssets(next);persistAssignments(nextAssignments);
+    logActivity('status',`Asset marked ${status.toLowerCase()}`,`${asset.tag} · ${asset.name}`);
+    notify(`${asset.tag} marked ${status.toLowerCase()}.`);
+  };
+  const submitAssignment = e => {
+    e.preventDefault();
+    const assetId=Number(assignmentForm.assetId), employeeId=Number(assignmentForm.employeeId);
+    const asset=assets.find(a=>a.id===assetId), employee=employees.find(a=>a.id===employeeId);
+    const originalAsset=assets.find(a=>a.id===Number(assignmentForm.originalAssetId));
+    if(!asset||!employee){notify('Choose an asset and employee.');return;}
+    if(!employee.active){notify('Inactive employees cannot receive assets.');return;}
+    if(asset.status!=='Available'){notify('Only available assets can be assigned.');return;}
+    if(activeAssignment(assetId)){notify('This asset already has an active assignment. Return it first.');return;}
+    if(assignmentForm.isTemporary){
+      if(!originalAsset||originalAsset.status!=='Under Repair'){notify("Choose the employee's original laptop that is under repair.");return;}
+      if(!originalAsset.employeeId||originalAsset.employeeId!==employeeId){notify('Select the employee whose original laptop is under repair.');return;}
+      if(!assignmentForm.temporaryReason.trim()){notify('Enter the reason for the temporary allotment.');return;}
+    }
+    const assignment={
+      id:Math.max(0,...assignments.map(a=>a.id))+1,
+      assetId, employeeId, assignedDate:assignmentForm.assignedDate, returnedDate:'',
+      notes:assignmentForm.notes, isTemporary:Boolean(assignmentForm.isTemporary),
+      originalAssetId:assignmentForm.isTemporary?Number(assignmentForm.originalAssetId):null,
+      temporaryReason:assignmentForm.isTemporary?assignmentForm.temporaryReason.trim():''
+    };
+    persistAssignments([assignment,...assignments]);
+    persistAssets(assets.map(a=>a.id===assetId?{...a,status:'Assigned',employeeId}:a));
+    logActivity('assignment',assignment.isTemporary?'Temporary asset assigned':'Asset assigned',`${asset.tag} → ${employee.name}`);
+    setModal(null);setPage('Assignments');notify(assignment.isTemporary?'Temporary laptop allotted successfully.':'Asset assigned successfully.');
+  };
+  const openReturnDialog = (assignment, suggestedStatus='Available') => {
+    setReturningAssignment(assignment);
+    setReturnForm({returnedDate:localDateString(),nextStatus:suggestedStatus,notes:'',repairDescription:'',repairVendor:'',repairCost:''});
+    setModal('return');
+  };
+  const returnAssignment = e => {
+    e.preventDefault();
+    if(!returningAssignment) return;
+    const assignment=returningAssignment;
+    const asset=assets.find(a=>a.id===assignment.assetId);
+    if(!asset) { notify('Could not find the asset for this assignment.'); return; }
+    const nextStatus=returnForm.nextStatus;
+    const returnedDate=returnForm.returnedDate||localDateString();
+    if(assignment.assignedDate && returnedDate < assignment.assignedDate){
+      notify('Return date cannot be earlier than the assignment date.');
+      return;
+    }
+    if(nextStatus==='Under Repair'&&!returnForm.repairDescription.trim()){
+      notify('Enter the repair issue before sending the asset for repair.');
+      return;
+    }
+    const closeNote=`Returned · next status: ${nextStatus}${returnForm.notes.trim()?` · ${returnForm.notes.trim()}`:''}`;
+    persistAssignments(assignments.map(a=>a.id===assignment.id?{...a,returnedDate,notes:[a.notes,closeNote].filter(Boolean).join(' · ')}:a));
+    // Preserve the original employee as the repair owner only for their regular
+    // asset. A temporary replacement should not be automatically reassigned
+    // to the same employee when its own repair is completed.
+    const keepRepairOwner=nextStatus==='Under Repair' && !assignment.isTemporary
+      ? (asset.employeeId||assignment.employeeId)
+      : null;
+    let repairHistory=asset.repairHistory||[];
+    if(nextStatus==='Under Repair') {
+      const openIndex=repairHistory.findIndex(r=>!r.completedDate);
+      const record={id:openIndex>=0?repairHistory[openIndex].id:Date.now(),reportedDate:returnedDate,description:returnForm.repairDescription.trim()||returnForm.notes.trim()||'Repair required after return',vendor:returnForm.repairVendor.trim(),cost:Number(returnForm.repairCost||0),completedDate:''};
+      repairHistory=openIndex>=0?repairHistory.map((r,i)=>i===openIndex?{...r,...record}:r):[record,...repairHistory];
+    }
+    persistAssets(assets.map(a=>a.id===asset.id?{...a,status:nextStatus,employeeId:keepRepairOwner, ...(nextStatus==='Under Repair'?{notes:returnForm.repairDescription.trim()||returnForm.notes.trim()||a.notes, vendor:returnForm.repairVendor.trim()||a.vendor,repairReportedDate:returnedDate,currentRepairCost:Number(returnForm.repairCost||0),repairHistory,repairCompletedDate:''}:{})}:a));
+    const returnedEmployee=employees.find(e=>e.id===assignment.employeeId);
+    logActivity('return','Asset returned',`${asset.tag} · ${returnedEmployee?.name||'Employee'} · ${nextStatus}`);
+    if(nextStatus==='Under Repair') logActivity('repair','Asset sent for repair',`${asset.tag} · ${returnForm.repairDescription.trim()||returnForm.notes.trim()||'Repair required'}`);
+    setModal(null);setReturningAssignment(null);
+    notify(`${asset.tag} returned. Status set to ${nextStatus}.`);
+  };
+  const submitEmployee = e => {
+    e.preventDefault();
+    const employeeCode=employeeForm.employeeId.trim();
+    const employeeName=employeeForm.name.trim();
+    if(!employeeCode||!employeeName){notify('Employee ID and name are required.');return;}
+    if(employees.some(x=>x.employeeId.toLowerCase()===employeeCode.toLowerCase()&&x.id!==editingEmployeeId)){notify('Employee ID already exists.');return;}
+    if(!employeeForm.active&&assignments.some(a=>a.employeeId===editingEmployeeId&&!a.returnedDate)){notify('Return the employee’s active assets before deactivating this employee.');return;}
+    if(editingEmployeeId){
+      persistEmployees(employees.map(x=>x.id===editingEmployeeId?{...x,...employeeForm,employeeId:employeeCode,name:employeeName}:x));
+      notify('Employee updated.');
+    } else {
+      persistEmployees([{...employeeForm,employeeId:employeeCode,name:employeeName,id:Math.max(0,...employees.map(x=>x.id))+1},...employees]);
+      logActivity('employee','Employee added',`${employeeCode} · ${employeeName}`);
+      notify('Employee added.');
+    }
+    setModal(null);setEditingEmployeeId(null);setEmployeeForm({employeeId:'',name:'',department:'',email:'',active:true});
+  };
+  const editEmployee = employee => {
+    setEditingEmployeeId(employee.id);
+    setEmployeeForm({...employee});
+    setSelectedAsset(employee);
+    setModal('employee');
+  };
+  const submitRepair = e => {
+    e.preventDefault();
+    const todayString=localDateString();
+    const wasAssigned=selectedAsset.status==='Assigned'&&selectedAsset.employeeId;
+    const history=[...(selectedAsset.repairHistory||[])];
+    const activeIndex=history.findIndex(r=>!r.completedDate);
+    const record={id:activeIndex>=0?history[activeIndex].id:Date.now(),reportedDate:repairForm.reportedDate||todayString,description:repairForm.description.trim(),vendor:repairForm.vendor.trim(),cost:Number(repairForm.cost||0),completedDate:''};
+    if(activeIndex>=0)history[activeIndex]={...history[activeIndex],...record}; else history.unshift(record);
+    persistAssets(assets.map(a=>a.id===selectedAsset.id?{...a,status:'Under Repair',employeeId:wasAssigned?selectedAsset.employeeId:a.employeeId,notes:repairForm.description,vendor:repairForm.vendor,repairReportedDate:repairForm.reportedDate||todayString,currentRepairCost:Number(repairForm.cost||0),repairHistory:history}:a));
+    logActivity('repair','Repair details updated',`${selectedAsset.tag} · ${repairForm.description||'Issue recorded'}`);
+    if(wasAssigned){persistAssignments(assignments.map(a=>a.assetId===selectedAsset.id&&!a.returnedDate?{...a,returnedDate:todayString,notes:(a.notes?a.notes+' · ':'')+'Closed because asset was sent for repair'}:a));}
+    setModal(null);notify(wasAssigned?'Repair recorded; employee link retained for reassignment after repair.':'Repair details saved.');
+  };
+  const completeRepair = asset => {
+    // Completing a repair only makes the asset available. Do not automatically
+    // reassign it to its previous employee: they may still have a temporary
+    // replacement laptop. IT should return that replacement separately, then
+    // explicitly assign whichever laptop is needed.
+    const history=[...(asset.repairHistory||[])];
+    const activeIndex=history.findIndex(r=>!r.completedDate);
+    const currentCost=Number(asset.currentRepairCost ?? (activeIndex>=0 ? history[activeIndex].cost : 0) ?? 0);
+    const completedDate=localDateString();
+    if(activeIndex>=0){
+      history[activeIndex]={...history[activeIndex],cost:currentCost,completedDate};
+    }
+    const updated=assets.map(a=>a.id===asset.id?{
+      ...a,
+      status:'Available',
+      employeeId:null,
+      maintenanceCost:Number(a.maintenanceCost||0)+currentCost,
+      currentRepairCost:0,
+      repairHistory:history,
+      repairCompletedDate:completedDate
+    }:a);
+    persistAssets(updated);
+    logActivity('repair','Repair completed',`${asset.tag} · ${asset.name} · ${currency(currentCost)}`);
+    const hasTemporaryReplacement=assignments.some(a=>!a.returnedDate&&a.isTemporary&&a.originalAssetId===asset.id);
+    notify(hasTemporaryReplacement
+      ? 'Repair completed; original asset is available. The temporary assignment remains active until it is returned separately.'
+      : 'Repair completed; asset is available for assignment.');
+  };
+  const uploadName = (field,file) => { if(file){setAssetForm(f=>({...f,[field]:file.name}));notify(`${file.name} selected. Save the asset to keep the file name.`);} };
+  const navTo = label => {setPage(label);setQuery('');setStatusFilter('All statuses');setCategoryFilter('All categories');};
+  const activeAssets = assets.filter(a=>!['Sold','Scrapped','Retired'].includes(a.status));
+  const recentAssets = [...assets].sort((a,b)=>b.id-a.id).slice(0,5);
+  const employeeAssets = employee => assets.filter(a=>a.employeeId===employee.id&&a.status==='Assigned').length;
+
+  return <div className="app-shell"><style>{`.temporary-toggle{display:flex;align-items:flex-start;gap:10px;padding:13px;border:1px solid #dfe6f7;border-radius:8px;background:#f7f9ff;cursor:pointer}
+.temporary-toggle input{margin-top:3px;accent-color:#4169e1;width:15px;height:15px;flex-shrink:0}
+.temporary-toggle span{display:flex;flex-direction:column;gap:4px}
+.temporary-toggle strong{font-size:11px;color:#303747}
+.temporary-toggle small,.temporary-detail{display:block;font-size:9px;color:#858c9a;line-height:1.5;white-space:normal;margin-top:4px}
+.assignment-status-select{max-width:150px;min-width:120px;border:1px solid #e1e5eb;border-radius:6px;background:#fff;color:#555d6b;padding:7px 8px;font-size:10px}
+.search-select{position:relative;width:100%}
+.search-select input{width:100%;box-sizing:border-box;padding-right:34px}
+.search-select-trigger{position:absolute;right:10px;top:50%;transform:translateY(-50%);color:#858c9a;pointer-events:none;display:flex}
+.search-select-menu{position:absolute;z-index:40;top:calc(100% + 4px);left:0;right:0;max-height:220px;overflow-y:auto;background:#fff;border:1px solid #dfe4ec;border-radius:8px;box-shadow:0 10px 28px rgba(25,35,55,.13);padding:4px}
+.search-select-option{display:flex;width:100%;text-align:left;border:0;background:#fff;border-radius:5px;padding:9px 10px;font-size:12px;color:#303747;cursor:pointer}
+.search-select-option:hover,.search-select-option:focus{background:#f1f5ff;outline:none}
+.search-select-empty{padding:10px;color:#858c9a;font-size:11px}
+.badge-temporary{background:#fff1e4;color:#bd762f}
+.badge-regular{background:#edf1ff;color:#4969cf}
+.badge-retired{background:#f0f1f4;color:#757b87}
+@media(max-width:760px){.assignment-status-select{min-width:105px;max-width:120px}}`}</style>
+    <aside className="sidebar">
+      <div className="brand"><div className="brand-mark"><Package size={21}/></div><div><strong>assetwise</strong><span>IT ASSET MANAGEMENT</span></div></div>
+      <div className="workspace-label">WORKSPACE</div>
+      <nav><div className="nav-group"><p>OVERVIEW</p>{nav.filter(item=>item.label==='Dashboard').map(item=><button key={item.label} className={`nav-item ${page===item.label?'active':''}`} onClick={()=>navTo(item.label)}><item.icon size={18}/><span>{item.label}</span></button>)}</div><div className="nav-group"><p>ASSET MANAGEMENT</p>{nav.filter(item=>['Assets','Employees','Assignments'].includes(item.label)).map(item=><button key={item.label} className={`nav-item ${page===item.label?'active':''}`} onClick={()=>navTo(item.label)}><item.icon size={18}/><span>{item.label}</span>{item.label==='Assets'&&<span className="nav-count">{activeAssets.length}</span>}</button>)}</div><div className="nav-group"><p>OPERATIONS</p>{nav.filter(item=>item.label==='Repairs').map(item=><button key={item.label} className={`nav-item ${page===item.label?'active':''}`} onClick={()=>navTo(item.label)}><item.icon size={18}/><span>{item.label}</span></button>)}</div><div className="nav-group"><p>REPORTING</p>{nav.filter(item=>item.label==='Reports').map(item=><button key={item.label} className={`nav-item ${page===item.label?'active':''}`} onClick={()=>navTo(item.label)}><item.icon size={18}/><span>{item.label}</span></button>)}</div></nav>
+      <div className="sidebar-bottom">
+        <div className="help-card"><div className="help-icon"><CircleHelp size={18}/></div><strong>Need a hand?</strong><p>Manage assets, assignments and repairs from one place.</p></div>
+        <button className={`nav-item ${page==='Settings'?'active':''}`} onClick={()=>navTo('Settings')}><Settings size={18}/><span>Settings</span></button>
+        <div className="profile"><div className="avatar">IT</div><div className="profile-copy"><strong>IT Administrator</strong><span>Admin workspace</span></div><MoreHorizontal size={18}/></div>
+      </div>
+    </aside>
+    <main className="main-area">
+      <header className="topbar">
+        <div className="breadcrumbs"><span>Workspace</span><span className="crumb-slash">/</span><strong>{page}</strong></div>
+        <div className="top-actions"><button className="icon-button notification" onClick={()=>notify(`${expiring.length} warranty item(s) expiring in the next 30 days.`)}><Bell size={18}/>{expiring.length>0&&<i/>}</button><div className="top-avatar">IT</div></div>
+      </header>
+      <div className="content">
+        {page==='Dashboard'&&<DashboardPage counts={counts} expiring={expiring} expired={expired} recentAssets={recentAssets} assets={assets} employees={employees} activity={activity} onAdd={resetAssetForm} onNavigate={navTo} onFilterStatus={status=>{setPage('Assets');setQuery('');setStatusFilter(status);setCategoryFilter('All categories')}} onFilterCategory={category=>{setPage('Assets');setQuery('');setStatusFilter('All statuses');setCategoryFilter(category)}} onView={a=>{setSelectedAsset(a);setModal('details')}} currency={currency} dateLabel={dateLabel}/>}
+        {page==='Assets'&&<AssetsPage assets={filteredAssets} allAssets={assets} employees={employees} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} categoryFilter={categoryFilter} setCategoryFilter={setCategoryFilter} onAdd={resetAssetForm} onEdit={editAsset} onView={a=>{setSelectedAsset(a);setModal('details')}} onStatus={markStatus} currentEmployee={currentEmployee} currency={currency} dateLabel={dateLabel} warrantyStatus={warrantyStatus}/>}
+        {page==='Employees'&&<EmployeesPage employees={employees} assets={assets} onAdd={()=>{setEditingEmployeeId(null);setEmployeeForm({employeeId:'',name:'',department:'',email:'',active:true});setModal('employee')}} onView={e=>{setSelectedAsset(e);setModal('employeeDetails')}} onEdit={editEmployee}/>}
+        {page==='Assignments'&&<AssignmentsPage assignments={assignments} assets={assets} employees={employees} onAdd={()=>{setAssignmentForm({assetId:'',employeeId:'',assignedDate:localDateString(),notes:'',isTemporary:false,originalAssetId:'',temporaryReason:'Original laptop under repair'});setModal('assign')}} onReturn={openReturnDialog} onStatusChange={markStatus} dateLabel={dateLabel}/>}
+        {page==='Repairs'&&<RepairsPage assets={assets} onComplete={completeRepair} onOpen={a=>{setSelectedAsset(a);setRepairForm({description:a.notes||'',reportedDate:a.repairReportedDate||localDateString(),vendor:a.vendor||'',cost:String(a.currentRepairCost??(a.repairHistory||[]).find(r=>!r.completedDate)?.cost??'')});setModal('repair')}} currency={currency} dateLabel={dateLabel}/>}
+        {page==='Reports'&&<ReportsPage assets={assets} assignments={assignments} employees={employees} currency={currency}/>}
+        {page==='Settings'&&<SettingsPage onReset={()=>{if(confirm('Restore the initial records? This clears saved changes in this browser.')){localStorage.removeItem('itam-assets');localStorage.removeItem('itam-employees');localStorage.removeItem('itam-assignments');localStorage.removeItem('itam-activity');location.reload();}}}/>}
+      </div>
     </main>
-    {message&&<div className="toast">{message}</div>}
-    {modal==='asset'&&<Modal title={editId?'Edit asset':'Add asset'} close={()=>setModal('')}><div className="form-grid">
-      <Field label="Asset tag *"><input required value={assetForm.tag} onChange={e=>setAssetForm({...assetForm,tag:e.target.value})}/></Field><Field label="Asset name *"><input required value={assetForm.name} onChange={e=>setAssetForm({...assetForm,name:e.target.value})}/></Field>
-      <Field label="Category"><select value={assetForm.category} onChange={e=>setAssetForm({...assetForm,category:e.target.value})}>{ASSET_CATEGORIES.map(c=><option key={c}>{c}</option>)}</select></Field><Field label="Inventory tracking"><select value={assetForm.quantityTracked?'bulk':'individual'} onChange={e=>setAssetForm({...assetForm,quantityTracked:e.target.value==='bulk',quantity:e.target.value==='bulk'?(assetForm.quantity||1):1,availableQuantity:e.target.value==='bulk'?(assetForm.availableQuantity??assetForm.quantity??1):1})}><option value="individual">Individual asset (laptop/monitor)</option><option value="bulk">Quantity-tracked item (mouse/cables)</option></select></Field>{assetForm.quantityTracked&&<><Field label="Total quantity"><input type="number" min="0" value={assetForm.quantity??1} onChange={e=>setAssetForm({...assetForm,quantity:e.target.value,availableQuantity:Math.min(Number(assetForm.availableQuantity??e.target.value),Number(e.target.value))})}/></Field><Field label="Available quantity"><input type="number" min="0" max={assetForm.quantity||0} value={assetForm.availableQuantity??assetForm.quantity??1} onChange={e=>setAssetForm({...assetForm,availableQuantity:e.target.value})}/></Field></>}<Field label="Brand"><input value={assetForm.brand} onChange={e=>setAssetForm({...assetForm,brand:e.target.value})}/></Field>
-      <Field label="Model"><input value={assetForm.model} onChange={e=>setAssetForm({...assetForm,model:e.target.value})}/></Field><Field label="Serial number"><input value={assetForm.serial} onChange={e=>setAssetForm({...assetForm,serial:e.target.value})}/></Field>
-      <Field label="Status"><select value={assetForm.status} onChange={e=>setAssetForm({...assetForm,status:e.target.value})}>{ASSET_STATUSES.map(s=><option key={s}>{s}</option>)}</select></Field>{assetForm.status==='Assigned'&&<Field label="Assigned employee *"><select required value={assetForm.employeeId||''} onChange={e=>setAssetForm({...assetForm,employeeId:e.target.value})}><option value="">Select employee</option>{employees.filter(e=>e.active).map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></Field>}<Field label="Condition"><select value={assetForm.condition} onChange={e=>setAssetForm({...assetForm,condition:e.target.value})}><option>New</option><option>Refurbished</option></select></Field>
-      <Field label={assetForm.quantityTracked?"Purchase price per unit (₹)":"Purchase price (₹)"}><input type="number" min="0" value={assetForm.purchasePrice} onChange={e=>setAssetForm({...assetForm,purchasePrice:e.target.value})}/></Field><Field label="Lifetime repair cost (auto)"><input readOnly value={currency(repairTotal(editId||0))}/></Field>
-      <Field label="Purchase date"><input type="date" value={assetForm.purchaseDate} onChange={e=>setAssetForm({...assetForm,purchaseDate:e.target.value})}/></Field><Field label="Warranty expiry"><input type="date" value={assetForm.warrantyExpiry} onChange={e=>setAssetForm({...assetForm,warrantyExpiry:e.target.value})}/></Field>
-      <Field label="Vendor"><input value={assetForm.vendor} onChange={e=>setAssetForm({...assetForm,vendor:e.target.value})}/></Field><Field label="Invoice file name"><input value={assetForm.invoice} onChange={e=>setAssetForm({...assetForm,invoice:e.target.value})}/></Field>
-      <Field label="Warranty file name"><input value={assetForm.warrantyDoc} onChange={e=>setAssetForm({...assetForm,warrantyDoc:e.target.value})}/></Field><Field label="Notes"><input value={assetForm.notes} onChange={e=>setAssetForm({...assetForm,notes:e.target.value})}/></Field>
-    </div><footer><button type="button" className="secondary" onClick={()=>setModal('')}>Cancel</button><button type="button" className="primary" onClick={saveAsset}>Save asset</button></footer></Modal>}
-    {modal==='employee'&&<Modal title={editId?'Edit employee':'Add employee'} close={()=>setModal('')}><div className="form-grid"><Field label="Employee ID *"><input required value={employeeForm.employeeId} onChange={e=>setEmployeeForm({...employeeForm,employeeId:e.target.value})}/></Field><Field label="Name *"><input required value={employeeForm.name} onChange={e=>setEmployeeForm({...employeeForm,name:e.target.value})}/></Field><Field label="Department"><input value={employeeForm.department} onChange={e=>setEmployeeForm({...employeeForm,department:e.target.value})}/></Field><Field label="Email"><input type="email" value={employeeForm.email} onChange={e=>setEmployeeForm({...employeeForm,email:e.target.value})}/></Field><Field label="Status"><select value={String(employeeForm.active)} onChange={e=>setEmployeeForm({...employeeForm,active:e.target.value==='true'})}><option value="true">Active</option><option value="false">Inactive</option></select></Field></div><footer><button type="button" className="secondary" onClick={()=>setModal('')}>Cancel</button><button type="button" className="primary" onClick={saveEmployee}>Save employee</button></footer></Modal>}
-    {modal==='repair'&&<Modal title="Record repair" close={()=>setModal('')}><div className="form-grid"><Field label="Asset"><select value={repairForm.assetId} onChange={e=>setRepairForm({...repairForm,assetId:Number(e.target.value)})}>{assets.map(a=><option key={a.id} value={a.id}>{a.tag} — {a.name}</option>)}</select></Field><Field label="Reported / repair date *"><input type="date" required value={repairForm.reportedDate} onChange={e=>setRepairForm({...repairForm,reportedDate:e.target.value})}/></Field><Field label="Repair note / issue *"><input required value={repairForm.note} onChange={e=>setRepairForm({...repairForm,note:e.target.value})} placeholder="e.g. keyboard replacement"/></Field><Field label="Cost for this repair (₹)"><input type="number" min="0" value={repairForm.cost} onChange={e=>setRepairForm({...repairForm,cost:e.target.value})}/></Field><Field label="Completed date (leave blank if ongoing)"><input type="date" value={repairForm.completedDate} onChange={e=>setRepairForm({...repairForm,completedDate:e.target.value})}/></Field></div><footer><button type="button" className="secondary" onClick={()=>setModal('')}>Cancel</button><button type="button" className="primary" onClick={saveRepair}>Save repair</button></footer></Modal>}
-    {modal==='assignment'&&<Modal title="Assign asset" close={()=>setModal('')}><div className="form-grid"><Field label="Available asset *"><select required value={assignmentForm.assetId} onChange={e=>setAssignmentForm({...assignmentForm,assetId:e.target.value})}><option value="">Select asset</option>{assets.filter(a=>a.quantityTracked?Number(a.availableQuantity)>0:a.status==='Available'&&!current(a.id)).map(a=><option key={a.id} value={a.id}>{a.tag} — {a.name}{a.quantityTracked?` (${a.availableQuantity} available)`:''}</option>)}</select></Field><Field label="Employee *"><select required value={assignmentForm.employeeId} onChange={e=>setAssignmentForm({...assignmentForm,employeeId:e.target.value,originalAssetId:''})}><option value="">Select employee</option>{employees.filter(e=>e.active).map(e=><option key={e.id} value={e.id}>{e.name} ({e.employeeId})</option>)}</select></Field>{asset(assignmentForm.assetId)?.quantityTracked&&<Field label={`Quantity (available: ${asset(assignmentForm.assetId)?.availableQuantity||0})`}><input type="number" min="1" max={asset(assignmentForm.assetId)?.availableQuantity||1} value={assignmentForm.quantity} onChange={e=>setAssignmentForm({...assignmentForm,quantity:e.target.value})}/></Field>}<Field label="Notes"><input value={assignmentForm.notes} onChange={e=>setAssignmentForm({...assignmentForm,notes:e.target.value})}/></Field><label className="check-field"><input type="checkbox" checked={assignmentForm.temporary} onChange={e=>setAssignmentForm({...assignmentForm,temporary:e.target.checked})}/> Temporary replacement for a laptop under repair</label>{assignmentForm.temporary&&<Field label="Original laptop under repair *"><select required value={assignmentForm.originalAssetId} onChange={e=>setAssignmentForm({...assignmentForm,originalAssetId:e.target.value})}><option value="">Select original laptop</option>{assets.filter(a=>a.status==='Under Repair'&&Number(a.employeeId)===Number(assignmentForm.employeeId)&&a.category==='Laptop').map(a=><option key={a.id} value={a.id}>{a.tag} — {a.name}</option>)}</select></Field>}</div><footer><button type="button" className="secondary" onClick={()=>setModal('')}>Cancel</button><button type="button" className="primary" onClick={saveAssignment}>Assign asset</button></footer></Modal>}
+    {modal==='asset'&&<Modal title={editingAsset?'Edit asset':'Add new asset'} onClose={()=>setModal(null)} wide>
+      <form onSubmit={saveAsset} className="form-body">
+        <div className="form-section-title">Asset information</div>
+        <div className="form-grid">
+          <Field label="Asset tag *"><input required value={assetForm.tag} onChange={e=>setAssetForm({...assetForm,tag:e.target.value})} placeholder="AST-010"/></Field>
+          <Field label="Asset name *"><input required value={assetForm.name} onChange={e=>setAssetForm({...assetForm,name:e.target.value})} placeholder="e.g. Dell Latitude 5450"/></Field>
+          <Field label="Category"><select value={assetForm.category} onChange={e=>setAssetForm({...assetForm,category:e.target.value})}>{ASSET_CATEGORIES.map(x=><option key={x}>{x}</option>)}</select></Field>
+          <Field label="Condition"><select value={assetForm.condition} onChange={e=>setAssetForm({...assetForm,condition:e.target.value})}><option>New</option><option>Refurbished</option></select></Field>
+          <Field label="Brand"><input value={assetForm.brand} onChange={e=>setAssetForm({...assetForm,brand:e.target.value})} placeholder="e.g. Dell"/></Field>
+          <Field label="Model"><input value={assetForm.model} onChange={e=>setAssetForm({...assetForm,model:e.target.value})} placeholder="Model number"/></Field>
+          <Field label="Serial number"><input value={assetForm.serial} onChange={e=>setAssetForm({...assetForm,serial:e.target.value})} placeholder="Serial number"/></Field>
+          <Field label="Status"><select value={assetForm.status} onChange={e=>setAssetForm({...assetForm,status:e.target.value})}>{ASSET_STATUSES.map(x=><option key={x}>{x}</option>)}</select></Field>
+          {assetForm.status==='Assigned'&&<Field label="Assigned employee *"><select required value={assetForm.employeeId} onChange={e=>setAssetForm({...assetForm,employeeId:e.target.value})}><option value="">Select employee</option>{employees.filter(e=>e.active).map(e=><option key={e.id} value={e.id}>{e.employeeId} · {e.name}</option>)}</select></Field>}
+        </div>
+        <div className="form-section-title">Purchase & costs</div>
+        <div className="form-grid">
+          <Field label="Purchase price (₹)"><input type="number" min="0" value={assetForm.purchasePrice} onChange={e=>setAssetForm({...assetForm,purchasePrice:e.target.value})} placeholder="0"/></Field>
+          <Field label="Completed repair cost to date (₹)"><input type="number" min="0" value={assetForm.maintenanceCost} onChange={e=>setAssetForm({...assetForm,maintenanceCost:e.target.value})} placeholder="0"/></Field>
+          <Field label="Purchase date"><input type="date" value={assetForm.purchaseDate} onChange={e=>setAssetForm({...assetForm,purchaseDate:e.target.value})}/></Field>
+          <Field label="Vendor / supplier"><input value={assetForm.vendor} onChange={e=>setAssetForm({...assetForm,vendor:e.target.value})} placeholder="Supplier name"/></Field>
+          <Field label="Warranty start date"><input type="date" value={assetForm.warrantyStart||''} onChange={e=>setAssetForm({...assetForm,warrantyStart:e.target.value})}/></Field>
+          <Field label="Warranty expiry date"><input type="date" min={assetForm.warrantyStart||assetForm.purchaseDate||undefined} value={assetForm.warrantyExpiry} onChange={e=>setAssetForm({...assetForm,warrantyExpiry:e.target.value})}/></Field>
+          <Field label="Warranty provider"><input value={assetForm.warrantyProvider||''} onChange={e=>setAssetForm({...assetForm,warrantyProvider:e.target.value})} placeholder="Manufacturer / service provider"/></Field>
+          <Field label="Warranty coverage / terms"><input value={assetForm.warrantyCoverage||''} onChange={e=>setAssetForm({...assetForm,warrantyCoverage:e.target.value})} placeholder="e.g. parts and labour, onsite support"/></Field>
+        </div>
+        <p className="form-note">Warranty is calculated from the expiry date: Active, Expiring soon (within 30 days), Expired, or Not recorded. Add the warranty document for reference.</p>
+        <div className="form-section-title">Documents</div>
+        <div className="document-upload-grid">
+          <DocumentUpload title="Invoice / purchase bill" filename={assetForm.invoice} inputRef={invoiceRef} onChange={file=>uploadName('invoice',file)}/>
+          <DocumentUpload title="Warranty document" filename={assetForm.warrantyDoc} inputRef={warrantyRef} onChange={file=>uploadName('warrantyDoc',file)}/>
+        </div>
+        <p className="form-note">Selected files are not uploaded. Only the file name is recorded.</p>
+        <Field label="Notes"><textarea rows="3" value={assetForm.notes} onChange={e=>setAssetForm({...assetForm,notes:e.target.value})} placeholder="Condition, accessories, disposal notes…"/></Field>
+        <div className="modal-actions"><button type="button" className="btn secondary" onClick={()=>setModal(null)}>Cancel</button><button className="btn primary" type="submit"><Plus size={16}/>{editingAsset?'Save changes':'Add asset'}</button></div>
+      </form>
+    </Modal>}
+    {modal==='assign'&&<Modal title="Assign an asset" onClose={()=>setModal(null)}>
+      <form className="form-body" onSubmit={submitAssignment}>
+        <div className="info-callout"><ArrowLeftRight size={17}/><span>Assign an available asset to an employee. Use temporary allotment when their regular laptop is under repair.</span></div>
+        <div className="form-section-title">Assignment details</div>
+        <Field label="Asset to allot *"><SearchableSelect required value={assignmentForm.assetId} placeholder="Search by asset tag or name…" emptyText="No available assets match your search" options={assets.filter(a=>a.status==='Available').map(a=>({value:String(a.id),label:`${a.tag} · ${a.name}`}))} onChange={value=>setAssignmentForm({...assignmentForm,assetId:value})}/></Field>
+        <Field label="Employee receiving asset *"><SearchableSelect required value={assignmentForm.employeeId} placeholder="Search by employee ID or name…" emptyText="No active employees match your search" options={employees.filter(e=>e.active).map(e=>({value:String(e.id),label:`${e.employeeId} · ${e.name}`}))} onChange={value=>setAssignmentForm({...assignmentForm,employeeId:value,originalAssetId:''})}/></Field>
+        <Field label="Assignment date *"><input required type="date" value={assignmentForm.assignedDate} onChange={e=>setAssignmentForm({...assignmentForm,assignedDate:e.target.value})}/></Field>
+        <label className="temporary-toggle"><input type="checkbox" checked={Boolean(assignmentForm.isTemporary)} onChange={e=>setAssignmentForm({...assignmentForm,isTemporary:e.target.checked,originalAssetId:e.target.checked?assignmentForm.originalAssetId:''})}/><span><strong>Temporary allotment</strong><small>Tick this if the employee's regular laptop is under repair.</small></span></label>
+        {assignmentForm.isTemporary&&<>
+          <div className="form-section-title">Temporary replacement</div>
+          <Field label="Employee's original laptop under repair *"><SearchableSelect required value={assignmentForm.originalAssetId} placeholder="Search laptop tag or name…" emptyText="No matching laptop under repair" options={assets.filter(a=>a.status==='Under Repair'&&a.category==='Laptop'&&a.employeeId===Number(assignmentForm.employeeId)).map(a=>({value:String(a.id),label:`${a.tag} · ${a.name}`}))} onChange={value=>setAssignmentForm({...assignmentForm,originalAssetId:value})}/></Field>{!assets.some(a=>a.status==='Under Repair'&&a.category==='Laptop'&&a.employeeId===Number(assignmentForm.employeeId))&&<p className="form-note">No laptop under repair is linked to this employee. Select the employee first, then check the repair record.</p>}
+          <Field label="Temporary allotment reason *"><input required value={assignmentForm.temporaryReason} onChange={e=>setAssignmentForm({...assignmentForm,temporaryReason:e.target.value})} placeholder="Original laptop under repair"/></Field>
+        </>}
+        <div className="form-section-title">Handover notes</div>
+        <Field label="Notes"><textarea rows="3" value={assignmentForm.notes} onChange={e=>setAssignmentForm({...assignmentForm,notes:e.target.value})} placeholder="Charger, bag, handover notes…"/></Field>
+        <div className="modal-actions"><button type="button" className="btn secondary" onClick={()=>setModal(null)}>Cancel</button><button type="submit" className="btn primary">{assignmentForm.isTemporary?'Confirm temporary allotment':'Confirm assignment'}</button></div>
+      </form>
+    </Modal>}
+    {modal==='employee'&&<Modal title={editingEmployeeId?'Edit employee':'Add employee'} onClose={()=>{setModal(null);setEditingEmployeeId(null)}}>
+      <form className="form-body" onSubmit={submitEmployee}>
+        <div className="form-section-title">Employee information</div>
+        <Field label="Employee ID *"><input required value={employeeForm.employeeId} onChange={e=>setEmployeeForm({...employeeForm,employeeId:e.target.value})} placeholder="EMP-105"/></Field>
+        <Field label="Full name *"><input required value={employeeForm.name} onChange={e=>setEmployeeForm({...employeeForm,name:e.target.value})} placeholder="Employee name"/></Field>
+        <Field label="Department"><input value={employeeForm.department} onChange={e=>setEmployeeForm({...employeeForm,department:e.target.value})} placeholder="Department"/></Field>
+        <Field label="Work email"><input type="email" value={employeeForm.email} onChange={e=>setEmployeeForm({...employeeForm,email:e.target.value})} placeholder="name@company.com"/></Field>
+        <div className="form-section-title">Employment status</div>
+        <label className="temporary-toggle"><input type="checkbox" checked={Boolean(employeeForm.active)} onChange={e=>setEmployeeForm({...employeeForm,active:e.target.checked})}/><span><strong>Active employee</strong><small>Inactive employees cannot receive new assignments.</small></span></label>
+        <div className="modal-actions"><button type="button" className="btn secondary" onClick={()=>{setModal(null);setEditingEmployeeId(null)}}>Cancel</button><button type="submit" className="btn primary">{editingEmployeeId?'Save changes':'Add employee'}</button></div>
+      </form>
+    </Modal>}
+    {modal==='return'&&returningAssignment&&<Modal title="Return asset" onClose={()=>{setModal(null);setReturningAssignment(null)}}>
+      <form className="form-body" onSubmit={returnAssignment}>
+        {(()=>{const asset=assets.find(a=>a.id===returningAssignment.assetId);return <div className="info-callout"><ArrowDownLeft size={17}/><span><strong>{asset?.name||'Asset'}</strong><br/>{asset?.tag||''} · Select the asset's condition after return.</span></div>})()}
+        <Field label="Return date *"><input type="date" required value={returnForm.returnedDate} onChange={e=>setReturnForm({...returnForm,returnedDate:e.target.value})}/></Field>
+        <Field label="Next asset status *"><select value={returnForm.nextStatus} onChange={e=>setReturnForm({...returnForm,nextStatus:e.target.value})}><option>Available</option><option>Under Repair</option><option>Missing</option><option>Retired</option><option>Sold</option><option>Scrapped</option></select></Field>
+        {returnForm.nextStatus==='Under Repair'&&<><div className="form-section-title">Repair details</div><Field label="Issue / repair note *"><textarea required rows="3" value={returnForm.repairDescription} onChange={e=>setReturnForm({...returnForm,repairDescription:e.target.value})} placeholder="Describe the fault found during return"/></Field><Field label="Service vendor"><input value={returnForm.repairVendor} onChange={e=>setReturnForm({...returnForm,repairVendor:e.target.value})} placeholder="Repair centre / vendor"/></Field><Field label="Current repair cost (₹)"><input type="number" min="0" value={returnForm.repairCost} onChange={e=>setReturnForm({...returnForm,repairCost:e.target.value})} placeholder="0 if not yet known"/></Field></>}
+        <Field label="Return notes"><textarea rows="2" value={returnForm.notes} onChange={e=>setReturnForm({...returnForm,notes:e.target.value})} placeholder="Condition, missing accessories, or handover notes"/></Field>
+        <div className="modal-actions"><button type="button" className="btn secondary" onClick={()=>{setModal(null);setReturningAssignment(null)}}>Cancel</button><button type="submit" className="btn primary">Confirm return</button></div>
+      </form>
+    </Modal>}
+    {modal==='repair'&&selectedAsset&&<Modal title={`Repair · ${selectedAsset.tag}`} onClose={()=>setModal(null)}>
+      <form className="form-body" onSubmit={submitRepair}>
+        <div className="info-callout"><Wrench size={17}/><span>{selectedAsset.name}</span></div>
+        <div className="form-section-title">Repair record</div>
+        <Field label="Issue / repair description"><textarea rows="3" value={repairForm.description} onChange={e=>setRepairForm({...repairForm,description:e.target.value})} placeholder="Describe the issue…"/></Field>
+        <Field label="Reported date"><input type="date" value={repairForm.reportedDate} onChange={e=>setRepairForm({...repairForm,reportedDate:e.target.value})}/></Field>
+        <Field label="Service vendor"><input value={repairForm.vendor} onChange={e=>setRepairForm({...repairForm,vendor:e.target.value})} placeholder="Repair centre / vendor"/></Field>
+        <Field label="Current repair cost (₹)"><input type="number" min="0" value={repairForm.cost} onChange={e=>setRepairForm({...repairForm,cost:e.target.value})} placeholder="0"/></Field>
+        <div className="modal-actions"><button type="button" className="btn secondary" onClick={()=>setModal(null)}>Cancel</button><button type="submit" className="btn primary">Save repair details</button></div>
+      </form>
+    </Modal>}
+    {modal==='details'&&selectedAsset&&<Modal title="Asset details" onClose={()=>setModal(null)} wide>
+      <div className="detail-body">
+        <div className="detail-heading"><div className="asset-icon large"><Laptop size={24}/></div><div><h3>{selectedAsset.name}</h3><p>{selectedAsset.tag} · {selectedAsset.brand||selectedAsset.category}</p></div><Badge value={selectedAsset.status}/></div>
+        <div className="detail-grid">
+          <Detail label="Category" value={selectedAsset.category}/><Detail label="Condition" value={selectedAsset.condition}/><Detail label="Serial number" value={selectedAsset.serial||'—'}/><Detail label="Assigned employee / repair owner" value={currentEmployee(selectedAsset)?.name||'Not assigned'}/>
+          <Detail label="Purchase price" value={currency(selectedAsset.purchasePrice)}/><Detail label="Lifetime repair cost" value={currency(Number(selectedAsset.maintenanceCost||0)+Number(selectedAsset.currentRepairCost||0))}/><Detail label="Purchase date" value={dateLabel(selectedAsset.purchaseDate)}/><Detail label="Warranty status" value={warrantyStatus(selectedAsset)}/><Detail label="Warranty start" value={dateLabel(selectedAsset.warrantyStart)}/><Detail label="Warranty expiry" value={dateLabel(selectedAsset.warrantyExpiry)}/><Detail label="Warranty provider" value={selectedAsset.warrantyProvider||selectedAsset.vendor||'—'}/><Detail label="Warranty coverage" value={selectedAsset.warrantyCoverage||'Not specified'}/>
+          <Detail label="Vendor" value={selectedAsset.vendor||'—'}/><Detail label="Invoice" value={selectedAsset.invoice||'No document selected'}/><Detail label="Warranty document" value={selectedAsset.warrantyDoc||'No document selected'}/><Detail label="Model" value={selectedAsset.model||'—'}/>
+        </div>
+        <div className="asset-repair-history"><div className="repair-history-heading"><strong>Repair history</strong><span>Lifetime cost: {currency(Number(selectedAsset.maintenanceCost||0)+Number(selectedAsset.currentRepairCost||0))}</span></div>{(selectedAsset.repairHistory||[]).length===0?<p className="muted repair-history-empty">No repair history recorded for this asset.</p>:<div className="table-wrap"><table><thead><tr><th>REPORTED</th><th>ISSUE / NOTE</th><th>COST</th><th>COMPLETED</th></tr></thead><tbody>{selectedAsset.repairHistory.map((r,i)=><tr key={r.id||i}><td>{dateLabel(r.reportedDate)}</td><td>{r.description||'—'}{r.vendor&&<small>{r.vendor}</small>}</td><td>{currency(r.cost)}</td><td>{r.completedDate?dateLabel(r.completedDate):<Badge value="Under Repair"/>}</td></tr>)}</tbody></table></div>}</div>
+        {selectedAsset.notes&&<div className="detail-notes"><strong>Notes</strong><p>{selectedAsset.notes}</p></div>}
+        <div className="modal-actions"><button className="btn secondary" onClick={()=>setModal(null)}>Close</button><button className="btn primary" onClick={()=>{setModal(null);editAsset(selectedAsset)}}><Pencil size={15}/> Edit asset</button></div>
+      </div>
+    </Modal>}
+    {modal==='employeeDetails'&&selectedAsset&&<Modal title="Employee details" onClose={()=>setModal(null)}>
+      <div className="detail-body"><div className="employee-detail-avatar">{selectedAsset.name.split(' ').map(x=>x[0]).join('').slice(0,2)}</div><h3>{selectedAsset.name}</h3><p className="muted">{selectedAsset.employeeId}</p><div className="detail-grid single"><Detail label="Department" value={selectedAsset.department||'—'}/><Detail label="Email" value={selectedAsset.email||'—'}/><Detail label="Assigned assets" value={assets.filter(a=>a.employeeId===selectedAsset.id&&a.status==='Assigned').map(a=>a.name).join(', ')||'None'}/></div><div className="modal-actions"><button className="btn secondary" onClick={()=>setModal(null)}>Close</button><button className="btn primary" onClick={()=>editEmployee(selectedAsset)}><Pencil size={15}/> Edit employee</button></div></div>
+    </Modal>}
+    {toast&&<div className="toast"><CircleCheck size={17}/>{toast}</div>}
   </div>;
 }
+
+function Field({label,children}) {return <label className="field"><span>{label}</span>{children}</label>}
+function SearchableSelect({value,options,onChange,placeholder,emptyText='No matching options',required=false}) {
+  const [open,setOpen] = useState(false);
+  const [search,setSearch] = useState('');
+  const selected = options.find(option=>String(option.value)===String(value));
+  const visibleOptions = options.filter(option=>option.label.toLowerCase().includes(search.toLowerCase()));
+  const displayValue = open ? search : (selected?.label || '');
+  return <div className="search-select">
+    <input type="text" role="combobox" aria-expanded={open} aria-autocomplete="list" placeholder={placeholder} value={displayValue} required={required && !value}
+      onFocus={()=>{setSearch('');setOpen(true);}}
+      onChange={event=>{setSearch(event.target.value);setOpen(true);if(value)onChange('');}}
+      onKeyDown={event=>{if(event.key==='Escape'){setOpen(false);setSearch('');}if(event.key==='Enter'&&open&&visibleOptions.length){event.preventDefault();const option=visibleOptions[0];onChange(String(option.value));setSearch('');setOpen(false);}}}
+      onBlur={()=>setTimeout(()=>{setOpen(false);setSearch('');},120)} />
+    <span className="search-select-trigger"><ChevronDown size={15}/></span>
+    {open&&<div className="search-select-menu" role="listbox">{visibleOptions.length ? visibleOptions.map(option=><button type="button" role="option" aria-selected={String(option.value)===String(value)} className="search-select-option" key={option.value} onMouseDown={event=>event.preventDefault()} onClick={()=>{onChange(String(option.value));setSearch('');setOpen(false);}}>{option.label}</button>) : <div className="search-select-empty">{emptyText}</div>}</div>}
+  </div>;
+}
+function Detail({label,value}) {return <div className="detail-item"><span>{label}</span><strong>{value||'—'}</strong></div>}
+function DocumentUpload({title,filename,inputRef,onChange}) {return <div className="upload-card"><div className="upload-icon"><FileCheck2 size={19}/></div><div className="upload-copy"><strong>{title}</strong><span>{filename||'PDF, JPG or PNG'}</span></div><button type="button" className="btn small secondary" onClick={()=>inputRef.current?.click()}><Upload size={14}/> Choose</button><input ref={inputRef} type="file" accept=".pdf,.png,.jpg,.jpeg" hidden onChange={e=>onChange(e.target.files?.[0])}/></div>}
+function PageHeading({eyebrow,title,description,action}) {return <div className="page-heading"><div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1><p>{description}</p></div>{action}</div>}
+function DashboardPage({counts,expiring,expired,recentAssets,assets,employees,activity,onAdd,onNavigate,onFilterStatus,onFilterCategory,onView,currency,dateLabel}) {
+  const warrantyUnrecorded=assets.filter(a=>!['Sold','Scrapped','Retired'].includes(a.status)&&!a.warrantyExpiry);
+  const activeAssets=assets.filter(a=>!['Sold','Scrapped','Retired'].includes(a.status));
+  const totalSpend=activeAssets.reduce((sum,a)=>sum+Number(a.purchasePrice||0),0);
+  const maintenance=assets.reduce((sum,a)=>sum+Number(a.maintenanceCost||0)+Number(a.currentRepairCost||0),0);
+  const categories=[...new Set(assets.map(a=>a.category).filter(Boolean))].map(name=>({name,count:assets.filter(a=>a.category===name&&!['Sold','Scrapped','Retired'].includes(a.status)).length})).sort((a,b)=>b.count-a.count);
+  const statuses=['Available','Assigned','Under Repair','Missing','Retired','Sold','Scrapped'].map(status=>({status,count:assets.filter(a=>a.status===status).length}));
+  const statusScale=Math.max(1,...statuses.map(item=>item.count));
+  const statusIcon={Available:CircleCheck,Assigned:ArrowUpRight,'Under Repair':Wrench,Missing:AlertTriangle};
+  return <><PageHeading eyebrow="OVERVIEW" title="Dashboard" description="A quick, practical view of your IT inventory." action={<button className="btn primary" onClick={onAdd}><Plus size={16}/> Add asset</button>}/>
+    <div className="stats-grid dashboard-status-cards">{['Available','Assigned','Under Repair','Missing'].map(status=>{const Icon=statusIcon[status];const count=assets.filter(a=>a.status===status).length;const tone=status==='Available'?'green':status==='Assigned'?'blue':status==='Under Repair'?'orange':'red';return <button type="button" className="stat-card clickable-stat" key={status} onClick={()=>onFilterStatus(status)}><div className={`stat-icon ${tone}`}><Icon size={18}/></div><div className="stat-title">{status}</div><div className="stat-value">{count}</div><div className="stat-foot">View matching assets →</div></button>})}</div>
+    <div className="dashboard-grid inventory-dashboard-grid">
+      <section className="panel"><div className="panel-heading"><div><h2>Inventory by category</h2><p>Active equipment, grouped by type</p></div><button className="text-button" onClick={()=>onNavigate('Assets')}>All assets →</button></div>
+        {categories.length===0?<div className="empty-state"><strong>No inventory yet</strong><p>Add your first asset to see the breakdown.</p></div>:<div className="inventory-breakdown">{categories.map(item=><button type="button" className="category-row" key={item.name} onClick={()=>onFilterCategory(item.name)}><span className="category-label">{item.name}</span><svg role="img" aria-label={`${item.count} ${item.name} assets`} viewBox="0 0 100 10" preserveAspectRatio="none" style={{display:'block',width:'100%',height:10,minWidth:50,overflow:'visible'}}><rect x="0" y="1" width="100" height="8" rx="4" fill="#eef1f6"/><rect x="0" y="1" width={item.count ? Math.max(4,Math.min(100,item.count/Math.max(1,...categories.map(c=>c.count))*100)) : 0} height="8" rx="4" fill="#4169e1"><title>{item.count} {item.name} assets</title></rect></svg><b>{item.count}</b></button>)}</div>}
+        <p className="dashboard-note">Bars show the relative number of active assets in each category. Disposed assets remain included in lifecycle totals.</p>
+      </section>
+      <section className="panel"><div className="panel-heading"><div><h2>Asset status</h2><p>Click a status to filter the asset list</p></div></div><div className="inventory-breakdown">{statuses.map(item=><button type="button" className="status-row" key={item.status} onClick={()=>onFilterStatus(item.status)}><span>{item.status}</span><svg role="img" aria-label={`${item.count} assets with status ${item.status}`} viewBox="0 0 100 10" preserveAspectRatio="none" style={{display:'block',width:'100%',height:10,minWidth:40,overflow:'visible'}}><rect x="0" y="1" width="100" height="8" rx="4" fill="#eef1f6"/><rect x="0" y="1" width={item.count ? Math.max(3,Math.min(100,item.count/statusScale*100)) : 0} height="8" rx="4" fill={({'Available':'#35a66f','Assigned':'#5570ed','Under Repair':'#e9a23b','Missing':'#d95b61','Retired':'#9aa3b2','Sold':'#9a7de1','Scrapped':'#9aa3b2'})[item.status]}><title>{item.count} assets: {item.status}</title></rect></svg><b>{item.count}</b></button>)}</div></section>
+    </div>
+    <div className="dashboard-grid dashboard-bottom-grid">
+      <section className="panel recent-panel"><div className="panel-heading"><div><h2>Recent activity</h2><p>Latest recorded changes</p></div></div>{activity.length===0?<div className="empty-state"><strong>No activity yet</strong><p>Asset changes, assignments, returns and repairs will appear here.</p></div>:<div className="recent-activity-list">{activity.slice(0,6).map(item=><div className="recent-activity-item" key={item.id}><span className={`activity-dot activity-${item.type}`}/><div><strong>{item.title}</strong><p>{item.detail}</p></div><time>{new Date(item.date).toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</time></div>)}</div>}</section>
+      <section className="panel warranty-panel"><div className="panel-heading"><div><h2>Needs attention</h2><p>Repairs and warranty alerts</p></div></div>
+        {assets.filter(a=>a.status==='Under Repair').length>0&&<button className="attention-row dashboard-attention" onClick={()=>onNavigate('Repairs')}><span className="attention-symbol orange"><Wrench size={16}/></span><span className="attention-copy"><strong>{assets.filter(a=>a.status==='Under Repair').length} asset(s) under repair</strong><span>Review repair status and costs</span></span><ArrowUpRight size={15}/></button>}
+        {expiring.length>0&&<div className="warranty-alert-list"><div className="warranty-alert-heading"><strong>Warranty expiring soon</strong><span>Within the next 30 days · {expiring.length} asset(s)</span></div>{expiring.map(asset=><button type="button" className="attention-row dashboard-attention warranty-asset-link" key={asset.id} onClick={()=>onView(asset)} title={`View details for ${asset.name} (${asset.tag})`}><span className="attention-symbol amber"><ShieldCheck size={16}/></span><span className="attention-copy"><strong>{asset.name}</strong><span>{asset.tag} · Expires {dateLabel(asset.warrantyExpiry)}</span></span><span className="warranty-view-link">View asset details <ArrowUpRight size={14}/></span></button>)}</div>}
+        {expired.length>0&&<div className="warranty-alert-list"><div className="warranty-alert-heading"><strong>Warranty expired</strong><span>{expired.length} asset(s) · Coverage may no longer apply</span></div>{expired.map(asset=><button type="button" className="attention-row dashboard-attention warranty-asset-link" key={asset.id} onClick={()=>onView(asset)} title={`View details for ${asset.name} (${asset.tag})`}><span className="attention-symbol red-soft"><AlertTriangle size={16}/></span><span className="attention-copy"><strong>{asset.name}</strong><span>{asset.tag} · Expired {dateLabel(asset.warrantyExpiry)}</span></span><span className="warranty-view-link">View asset details <ArrowUpRight size={14}/></span></button>)}</div>}
+        {warrantyUnrecorded.length>0&&<button className="attention-row dashboard-attention" onClick={()=>onNavigate('Assets')}><span className="attention-symbol red-soft"><ShieldCheck size={16}/></span><span className="attention-copy"><strong>{warrantyUnrecorded.length} asset(s) without warranty dates</strong><span>Update warranty details in asset records</span></span><ArrowUpRight size={15}/></button>}
+        {assets.filter(a=>a.status==='Under Repair').length===0&&expiring.length===0&&expired.length===0&&warrantyUnrecorded.length===0&&<div className="empty-state"><strong>Nothing needs attention</strong><p>No current repair or warranty alerts.</p></div>}
+      </section>
+    </div>
+    <div className="finance-grid"><div className="finance-card"><div className="finance-icon"><Banknote size={18}/></div><div><span>Purchase value of active assets</span><strong>{currency(totalSpend)}</strong><small>Excludes retired, sold and scrapped assets</small></div></div><div className="finance-card"><div className="finance-icon mint"><Wrench size={18}/></div><div><span>Recorded maintenance cost</span><strong>{currency(maintenance)}</strong><small>Across all listed assets</small></div></div></div>
+  </>;
+}
+function AssetsPage({assets,allAssets,employees,query,setQuery,statusFilter,setStatusFilter,categoryFilter,setCategoryFilter,onAdd,onEdit,onView,onStatus,currentEmployee,currency,dateLabel,warrantyStatus}) {
+  const [actionId,setActionId]=useState(null);
+  return <><PageHeading eyebrow="INVENTORY" title="Assets" description="Track devices, purchase details, costs and documents." action={<button className="btn primary" onClick={onAdd}><Plus size={16}/> Add asset</button>}/>
+    <div className="toolbar"><div className="search-box"><Search size={17}/><input placeholder="Search tag, asset, serial or employee…" value={query} onChange={e=>setQuery(e.target.value)}/>{query&&<button onClick={()=>setQuery('')}><X size={14}/></button>}</div><div className="filter-control"><Filter size={16}/><select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option>All statuses</option>{ASSET_STATUSES.map(s=><option key={s}>{s}</option>)}</select></div><div className="filter-control"><select value={categoryFilter} onChange={e=>setCategoryFilter(e.target.value)}><option>All categories</option>{[...new Set(allAssets.map(a=>a.category)), 'Accessory','Printer','Phone','Other'].filter((x,i,a)=>a.indexOf(x)===i).map(s=><option key={s}>{s}</option>)}</select></div><button className="btn secondary small" onClick={()=>{setQuery('');setStatusFilter('All statuses');setCategoryFilter('All categories')}}>Clear filters</button><span className="result-count">{assets.length} results</span></div>
+    <section className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>ASSET</th><th>CATEGORY</th><th>STATUS</th><th>ASSIGNED TO</th><th>WARRANTY</th><th>ACTIONS</th></tr></thead><tbody>{assets.map(a=><tr key={a.id}><td><button type="button" className="asset-cell asset-button" title={`View details for ${a.name} (${a.tag})`} aria-label={`View asset details for ${a.name}, asset tag ${a.tag}`} onClick={()=>onView(a)}><div className="asset-icon"><Laptop size={17}/></div><div><strong>{a.name}</strong><span>{a.tag} · {a.brand||a.category}</span></div></button></td><td>{a.category}</td><td><Badge value={a.status}/></td><td>{currentEmployee(a)?.name||<span className="muted">—</span>}</td><td><span className={`warranty-state warranty-${warrantyStatus(a).toLowerCase().replaceAll(' ','-')}`}>{warrantyStatus(a)}</span><small className="warranty-date">{dateLabel(a.warrantyExpiry)}</small></td><td><div className="row-actions"><button className="icon-button tiny" title="Edit asset" onClick={()=>onEdit(a)}><Pencil size={15}/></button><button className="icon-button tiny" title="More actions" onClick={()=>setActionId(actionId===a.id?null:a.id)}><MoreHorizontal size={16}/></button>{actionId===a.id&&<div className="action-menu">{a.status==='Available'&&<button onClick={()=>{onStatus(a,'Assigned');setActionId(null)}}><ArrowUpRight size={14}/> Assign</button>}{a.status==='Under Repair'?<button onClick={()=>{onStatus(a,'Available');setActionId(null)}}><CircleCheck size={14}/> Complete repair</button>:a.status!=='Available'&&!['Sold','Scrapped','Retired'].includes(a.status)&&<button onClick={()=>{onStatus(a,'Available');setActionId(null)}}><ArrowDownLeft size={14}/> Mark available / return</button>}{a.status!=='Under Repair'&&a.status!=='Sold'&&a.status!=='Scrapped'&&a.status!=='Retired'&&<button onClick={()=>{onStatus(a,'Under Repair');setActionId(null)}}><Wrench size={14}/> Send for repair</button>}{a.status!=='Missing'&&!['Sold','Scrapped','Retired'].includes(a.status)&&<button onClick={()=>{onStatus(a,'Missing');setActionId(null)}}><AlertTriangle size={14}/> Mark as missing</button>}{!['Sold','Scrapped','Retired'].includes(a.status)&&<><button onClick={()=>{onStatus(a,'Retired');setActionId(null)}}><Recycle size={14}/> Retire asset</button><button onClick={()=>{onStatus(a,'Sold');setActionId(null)}}><Banknote size={14}/> Mark as sold</button><button className="danger-option" onClick={()=>{if(confirm('Mark this asset as scrapped?'))onStatus(a,'Scrapped');setActionId(null)}}><Recycle size={14}/> Mark as scrapped</button></>}</div>}</div></td></tr>)}</tbody></table>
+      {assets.length===0&&<div className="empty-state"><div className="empty-icon"><Search size={22}/></div><strong>No assets found</strong><span>Try changing your search or filters.</span><button className="btn secondary" onClick={()=>{setQuery('');setStatusFilter('All statuses');setCategoryFilter('All categories')}}>Clear filters</button></div>}
+    </div><div className="table-foot"><span>Showing <strong>{assets.length}</strong> of <strong>{allAssets.length}</strong> assets</span><span>Changes saved in this browser</span></div></section>
+  </>;
+}
+function EmployeesPage({employees,assets,onAdd,onView,onEdit}) {
+  return <><PageHeading eyebrow="PEOPLE" title="Employees" description="Manage employee records and see who has company equipment." action={<button className="btn primary" onClick={onAdd}><Plus size={16}/> Add employee</button>}/><div className="stats-strip"><div><span>Employees</span><strong>{employees.length}</strong></div><div><span>Active employees</span><strong>{employees.filter(e=>e.active).length}</strong></div><div><span>Assets assigned</span><strong>{assets.filter(a=>a.status==='Assigned').length}</strong></div></div><section className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>EMPLOYEE</th><th>DEPARTMENT</th><th>EMAIL</th><th>ASSIGNED ASSETS</th><th>STATUS</th><th></th></tr></thead><tbody>{employees.map(e=><tr key={e.id}><td><button className="asset-cell asset-button" onClick={()=>onView(e)}><div className="person-avatar">{e.name.split(' ').map(x=>x[0]).join('').slice(0,2)}</div><div><strong>{e.name}</strong><span>{e.employeeId}</span></div></button></td><td>{e.department||'—'}</td><td>{e.email||'—'}</td><td><span className="asset-count">{assets.filter(a=>a.employeeId===e.id&&a.status==='Assigned').length}</span></td><td><Badge value={e.active?'Active':'Inactive'}/></td><td><div className="row-actions"><button className="icon-button tiny" title="View employee" onClick={()=>onView(e)}><Eye size={15}/></button><button className="icon-button tiny" title="Edit employee" onClick={()=>onEdit(e)}><Pencil size={15}/></button></div></td></tr>)}</tbody></table></div></section></>;
+}
+function AssignmentsPage({assignments,assets,employees,onAdd,onReturn,onStatusChange,dateLabel}) {
+  const [tab,setTab]=useState('All'); const [search,setSearch]=useState('');
+  const [assetStatus,setAssetStatus]=useState('All statuses'); const [category,setCategory]=useState('All categories');
+  const [period,setPeriod]=useState('All time'); const [customFrom,setCustomFrom]=useState(''); const [customTo,setCustomTo]=useState('');
+  const rows=assignments.filter(a=>{
+    const asset=assets.find(x=>x.id===a.assetId), employee=employees.find(x=>x.id===a.employeeId); if(!asset)return false;
+    const q=search.toLowerCase(); const searchable=[asset.tag,asset.name,asset.serial,asset.brand,employee?.name,employee?.employeeId].some(v=>(v||'').toLowerCase().includes(q));
+    const tabOk=tab==='All'||(tab==='Active'&&!a.returnedDate)||(tab==='History'&&Boolean(a.returnedDate));
+    const statusOk=assetStatus==='All statuses'||asset.status===assetStatus; const categoryOk=category==='All categories'||asset.category===category;
+    const assigned=a.assignedDate||''; let dateOk=true;
+    if(period!=='All time'&&period!=='Custom range') {const days=period==='Last 2 days'?2:period==='Last week'?7:30;const from=new Date();from.setHours(0,0,0,0);from.setDate(from.getDate()-(days-1));dateOk=Boolean(assigned)&&new Date(assigned+'T00:00:00')>=from;}
+    if(period==='Custom range')dateOk=(!customFrom||assigned>=customFrom)&&(!customTo||assigned<=customTo);
+    return searchable&&tabOk&&statusOk&&categoryOk&&dateOk;
+  }).sort((a,b)=>(b.assignedDate||'').localeCompare(a.assignedDate||''));
+  const clear=()=>{setTab('All');setSearch('');setAssetStatus('All statuses');setCategory('All categories');setPeriod('All time');setCustomFrom('');setCustomTo('')};
+  return <><PageHeading eyebrow="ASSET HANDOVER" title="Assignments" description="Search current handovers and past returns in one place." action={<button className="btn primary" onClick={onAdd}><Plus size={16}/> New assignment</button>}/>
+    <div className="tabs"><button className={tab==='All'?'selected':''} onClick={()=>setTab('All')}>All assignments <span>{assignments.length}</span></button><button className={tab==='Active'?'selected':''} onClick={()=>setTab('Active')}>Currently assigned <span>{assignments.filter(a=>!a.returnedDate).length}</span></button><button className={tab==='History'?'selected':''} onClick={()=>setTab('History')}>Return history <span>{assignments.filter(a=>a.returnedDate).length}</span></button></div>
+    <div className="toolbar assignment-filter-toolbar"><div className="search-box"><Search size={16}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search employee, asset tag, name or serial…"/></div><div className="filter-control"><select value={assetStatus} onChange={e=>setAssetStatus(e.target.value)}><option>All statuses</option>{ASSET_STATUSES.map(s=><option key={s}>{s}</option>)}</select></div><div className="filter-control"><select value={category} onChange={e=>setCategory(e.target.value)}><option>All categories</option>{[...new Set(assets.map(a=>a.category).filter(Boolean))].map(c=><option key={c}>{c}</option>)}</select></div><div className="filter-control"><select value={period} onChange={e=>setPeriod(e.target.value)}><option>All time</option><option>Last 2 days</option><option>Last week</option><option>Last month</option><option>Custom range</option></select></div>{period==='Custom range'&&<><label className="date-filter">From<input type="date" value={customFrom} onChange={e=>setCustomFrom(e.target.value)}/></label><label className="date-filter">To<input type="date" min={customFrom||undefined} value={customTo} onChange={e=>setCustomTo(e.target.value)}/></label></>}<button className="btn secondary small" onClick={clear}>Clear filters</button><span className="result-count">{rows.length} results</span></div>
+    <section className="panel table-panel"><div className="table-wrap"><table><thead><tr><th>ASSET</th><th>EMPLOYEE</th><th>TYPE</th><th>ASSIGNED DATE</th><th>RETURN DATE</th><th>ASSET STATUS</th><th>ACTIONS</th></tr></thead><tbody>{rows.map(a=>{const asset=assets.find(x=>x.id===a.assetId),employee=employees.find(x=>x.id===a.employeeId),original=assets.find(x=>x.id===a.originalAssetId);if(!asset)return null;return <tr key={a.id}><td><div className="asset-cell"><div className="asset-icon"><Laptop size={17}/></div><div><strong>{asset.name}</strong><span>{asset.tag}</span>{a.isTemporary&&<small className="temporary-detail">For: {original?.name||'laptop under repair'}</small>}</div></div></td><td><div className="employee-inline"><div className="person-avatar small-avatar">{employee?.name.split(' ').map(x=>x[0]).join('').slice(0,2)||'—'}</div><span>{employee?.name||'Unknown employee'}<small>{employee?.employeeId||''}</small></span></div></td><td>{a.isTemporary?<div><Badge value="Temporary"/><small className="temporary-detail">{a.temporaryReason||'Temporary replacement'}</small></div>:<Badge value="Regular"/>}</td><td>{dateLabel(a.assignedDate)}</td><td>{dateLabel(a.returnedDate)}</td><td><Badge value={asset.status}/></td><td>{!a.returnedDate&&<button className="btn small secondary" onClick={()=>onReturn(a)}><ArrowDownLeft size={14}/>{a.isTemporary?'Return temporary':'Record return'}</button>}</td></tr>})}</tbody></table>{rows.length===0&&<div className="empty-state"><div className="empty-icon"><ArrowLeftRight size={22}/></div><strong>No matching assignments</strong><span>Try changing your search or filters.</span><button className="btn secondary" onClick={clear}>Clear filters</button></div>}</div><div className="table-foot"><span>Showing <strong>{rows.length}</strong> assignment records</span><span>Active and historical handovers are preserved</span></div></section>
+  </>;
+}
+function RepairsPage({assets,onComplete,onOpen,currency,dateLabel}) {
+  const repairs=assets.filter(a=>a.status==='Under Repair');
+  return <><PageHeading eyebrow="MAINTENANCE" title="Repairs" description="Track service issues, vendors and maintenance costs." action={<span className="soft-count"><Wrench size={15}/>{repairs.length} in repair</span>}/><div className="stats-strip"><div><span>Currently under repair</span><strong>{repairs.length}</strong></div><div><span>Total maintenance cost</span><strong>{currency(assets.reduce((s,a)=>s+Number(a.maintenanceCost||0)+Number(a.currentRepairCost||0),0))}</strong></div><div><span>Repair records</span><strong>{assets.reduce((total,a)=>total+((a.repairHistory||[]).length|| (a.status==='Under Repair'?1:0)),0)}</strong></div></div>{repairs.length===0?<section className="panel empty-state"><div className="empty-icon"><CircleCheck size={22}/></div><strong>All clear</strong><span>There are no assets currently under repair.</span></section>:<div className="repair-grid">{repairs.map(a=><section className="panel repair-card" key={a.id}><div className="repair-card-top"><div className="asset-icon"><Laptop size={18}/></div><Badge value="Under Repair"/></div><h3>{a.name}</h3><p className="muted">{a.tag} · {a.serial||'No serial number'}</p><div className="repair-description">{a.notes||'No repair description added yet.'}</div><div className="repair-meta"><div><span>Reported</span><strong>{dateLabel(a.repairReportedDate)}</strong></div><div><span>Vendor</span><strong>{a.vendor||'Not specified'}</strong></div><div><span>Current repair cost</span><strong>{currency(a.currentRepairCost)}</strong></div><div><span>Lifetime repair cost</span><strong>{currency(Number(a.maintenanceCost||0)+Number(a.currentRepairCost||0))}</strong></div></div><div className="repair-actions"><button className="btn secondary" onClick={()=>onOpen(a)}><Pencil size={14}/> Edit details</button><button className="btn primary" onClick={()=>onComplete(a)}><CircleCheck size={14}/> Complete repair</button></div></section>)}</div>}</>;
+}
+function ReportsPage({assets,assignments,employees,currency}) {
+  const live=assets.filter(a=>!['Sold','Scrapped','Retired'].includes(a.status));
+  const total=live.reduce((s,a)=>s+Number(a.purchasePrice||0),0);
+  const maint=assets.reduce((s,a)=>s+Number(a.maintenanceCost||0)+Number(a.currentRepairCost||0),0);
+  const sold=assets.filter(a=>a.status==='Sold').length, scrap=assets.filter(a=>a.status==='Scrapped').length;
+  const rows=[['Available',assets.filter(a=>a.status==='Available').length],['Assigned',assets.filter(a=>a.status==='Assigned').length],['Under Repair',assets.filter(a=>a.status==='Under Repair').length],['Missing',assets.filter(a=>a.status==='Missing').length],['Retired',assets.filter(a=>a.status==='Retired').length],['Sold',sold],['Scrapped',scrap]];
+  return <><PageHeading eyebrow="INSIGHTS" title="Reports" description="A quick snapshot of inventory value, costs and lifecycle status." action={<button className="btn secondary" onClick={()=>{const csv=[['Asset Tag','Name','Category','Status','Condition','Purchase Price','Maintenance Cost','Warranty Start','Warranty Expiry','Warranty Status','Warranty Provider','Warranty Coverage'],...assets.map(a=>[a.tag,a.name,a.category,a.status,a.condition,a.purchasePrice,a.maintenanceCost,a.warrantyStart,a.warrantyExpiry,a.warrantyExpiry?(new Date(a.warrantyExpiry+'T00:00:00')<new Date(new Date().setHours(0,0,0,0))?'Expired':(new Date(a.warrantyExpiry+'T00:00:00')<=new Date(new Date().setHours(0,0,0,0)+30*86400000)?'Expiring soon':'Active')):'Not recorded',a.warrantyProvider,a.warrantyCoverage])].map(row=>row.map(v=>`"${String(v??'').replaceAll('"','""')}"`).join(',')).join('\\n');const blob=new Blob([csv],{type:'text/csv'});const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download='itam-assets-report.csv';link.click();URL.revokeObjectURL(url)}}><Download size={16}/> Export asset CSV</button>}/><div className="report-kpis"><div className="report-kpi"><span>Active inventory value</span><strong>{currency(total)}</strong><small>Purchase price · excluding sold/scrapped</small></div><div className="report-kpi"><span>Maintenance spend</span><strong>{currency(maint)}</strong><small>Recorded maintenance costs</small></div><div className="report-kpi"><span>Assignment records</span><strong>{assignments.length}</strong><small>Active and historical handovers</small></div><div className="report-kpi"><span>Employees</span><strong>{employees.length}</strong><small>Employee records</small></div></div><section className="panel report-panel"><div className="panel-head"><div><h2>Asset lifecycle</h2><p>Count by current status</p></div></div>{rows.map(([label,value])=><div className="bar-row" key={label}><span>{label}</span><div className="bar-track" style={{display:'block',width:'100%',height:8,backgroundColor:'#eef1f6',borderRadius:8,overflow:'hidden'}}><div className="bar-fill" style={{display:'block',height:'100%',width:`${assets.length?Math.max(value?2:0,Math.min(100,value/assets.length*100)):0}%`,backgroundColor:({'Available':'#35a66f','Assigned':'#5570ed','Under Repair':'#e9a23b','Missing':'#d95b61','Retired':'#9aa3b2','Sold':'#9a7de1','Scrapped':'#9aa3b2'})[label],borderRadius:8,transition:'width .25s ease'}}/></div><strong>{value}</strong></div>)}</section><div className="form-note report-note">Report figures are calculated from the current inventory records.</div></>;
+}
+function SettingsPage({onReset}) {return <><PageHeading eyebrow="PREFERENCES" title="Settings" description="Manage application data and preferences."/><section className="panel settings-panel"><div className="settings-row"><div><strong>Restore initial records</strong><p>Restore the starting assets, employees and assignments. Saved changes in this browser will be cleared.</p></div><button className="btn secondary" onClick={onReset}><Trash2 size={15}/> Reset data</button></div><div className="settings-row"><div><strong>Data storage</strong><p>Changes are saved automatically on this device.</p></div><Badge value="Enabled"/></div></section></>}
+
+export default App;
