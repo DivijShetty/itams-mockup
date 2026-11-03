@@ -1,6 +1,6 @@
 // Sample records used by the React-only mockup. These mirror the Django models:
 // Asset, Employee and Assignment. Replace this seed data with API calls when connected to Django.
-export const ASSET_STATUSES = ['Available','Assigned','Under Repair','Missing','Retired','Sold','Scrapped'];
+export const ASSET_STATUSES = ['Available','Assigned','Needs Repair','Under Repair','Missing','Retired','Sold','Scrapped'];
 export const ASSET_CATEGORIES = ['Laptop','Desktop','Monitor','Keyboard','Mouse','Accessory','Printer','Phone','Other'];
 export const ASSET_CONDITIONS = ['New','Refurbished'];
 

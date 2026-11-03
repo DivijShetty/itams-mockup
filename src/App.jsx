@@ -48,7 +48,11 @@ function App() {
   });
   const [bulkTransactions,setBulkTransactions] = useState(()=>readSaved('itam-bulk-transactions',[]));
   const [employees,setEmployees] = useState(()=>readSaved('itam-employees',initialEmployees));
-  const [assignments,setAssignments] = useState(()=>readSaved('itam-assignments',initialAssignments));
+  const [assignments,setAssignments] = useState(()=>readSaved('itam-assignments',initialAssignments).map(a=>{
+    // Older mockup records may have a stale isTemporary flag. The explicit allocation type is authoritative.
+    const type=a.temporaryType || (a.isTemporary ? (a.companyName ? 'Sister Company' : a.originalAssetId ? 'Repair Replacement' : 'Temporary') : 'Regular');
+    return {...a,temporaryType:type,isTemporary:type!=='Regular'};
+  }));
   const [activity,setActivity] = useState(()=>readSaved('itam-activity',[]));
   const [page,setPage] = useState('Dashboard');
   const [query,setQuery] = useState('');
@@ -175,7 +179,8 @@ function App() {
   const submitAssignment = e => {
     e.preventDefault();
     const assetId=Number(assignmentForm.assetId);
-    const isSisterCompany=assignmentForm.temporaryType==='Sister Company';
+    const allocationType=assignmentForm.temporaryType||'Regular';
+    const isSisterCompany=allocationType==='Sister Company';
     const employee=isSisterCompany?null:employees.find(a=>a.id===Number(assignmentForm.employeeId));
     const asset=assets.find(a=>a.id===assetId);
     const originalAsset=assets.find(a=>a.id===Number(assignmentForm.originalAssetId));
@@ -186,8 +191,8 @@ function App() {
     if(!issuedBy||!issuedBy.active||(issuedBy.recipientType||'Internal')!=='Internal'){notify('Select the internal company employee responsible for issuing this asset.');return;}
     if(asset.status!=='Available'){notify('Only available assets can be assigned.');return;}
     if(activeAssignment(assetId)){notify('This asset already has an active assignment. Record its return before creating another assignment.');return;}
-    const isTemporary=assignmentForm.temporaryType!=='Regular';
-    if(assignmentForm.temporaryType==='Repair Replacement'){
+    const isTemporary=allocationType!=='Regular';
+    if(allocationType==='Repair Replacement'){
       if(!originalAsset||!['Needs Repair','Under Repair'].includes(originalAsset.status)){notify("Select the employee's original laptop that is awaiting or undergoing repair.");return;}
       if(!originalAsset.employeeId||originalAsset.employeeId!==Number(assignmentForm.employeeId)){notify('Select the employee currently associated with the original laptop.');return;}
     }
@@ -197,8 +202,8 @@ function App() {
       id:Math.max(0,...assignments.map(a=>a.id))+1,
       assetId, employeeId:employee?.id||null, recipientName, companyName,
       issuedByEmployeeId:issuedBy.id, issuedByName:issuedBy.name, assignedDate:assignmentForm.assignedDate, returnedDate:'',
-      notes:assignmentForm.notes, isTemporary, temporaryType:assignmentForm.temporaryType||'Regular',
-      originalAssetId:assignmentForm.temporaryType==='Repair Replacement'?Number(assignmentForm.originalAssetId):null,
+      notes:assignmentForm.notes, isTemporary, temporaryType:allocationType,
+      originalAssetId:allocationType==='Repair Replacement'?Number(assignmentForm.originalAssetId):null,
       temporaryReason:isSisterCompany?assignmentForm.temporaryDescription.trim():(isTemporary?assignmentForm.temporaryReason.trim():'')
     };
     persistAssignments([assignment,...assignments]);
@@ -470,7 +475,7 @@ function App() {
         {page==='Bulk Stock'&&<BulkStockPage items={bulkItems} transactions={bulkTransactions} employees={employees} search={bulkSearch} setSearch={setBulkSearch} onAdd={openBulkItemDialog} onRestock={item=>{setBulkRestockForm({itemId:String(item.id),quantity:'',date:localDateString(),notes:''});setModal('bulk-restock')}} onIssue={item=>{setBulkIssueForm({itemId:String(item?.id||''),employeeId:'',quantity:'1',issuedDate:localDateString(),issuedBy:'IT Administrator',notes:''});setModal('bulk-issue')}} onReturn={openBulkReturn} currency={currency} dateLabel={dateLabel}/>}
         {page==='Assets'&&<AssetsPage assets={filteredAssets} allAssets={assets} employees={employees} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} categoryFilter={categoryFilter} setCategoryFilter={setCategoryFilter} onAdd={resetAssetForm} onEdit={editAsset} onView={a=>{setSelectedAsset(a);setModal('details')}} onStatus={markStatus} currentEmployee={currentEmployee} currency={currency} dateLabel={dateLabel} warrantyStatus={warrantyStatus}/>}
         {page==='Employees'&&<EmployeesPage employees={employees} assets={assets} onAdd={()=>{setEditingEmployeeId(null);setEmployeeForm({employeeId:'',name:'',department:'',email:'',active:true,recipientType:'Internal',organization:''});setModal('employee')}} onView={e=>{setSelectedAsset(e);setModal('employeeDetails')}} onEdit={editEmployee}/>}
-        {page==='Assignments'&&<AssignmentsPage assignments={assignments} assets={assets} employees={employees} onAdd={()=>{setAssignmentForm({assetId:'',employeeId:'',assignedDate:localDateString(),issuedByEmployeeId:'',notes:'',isTemporary:false,originalAssetId:'',temporaryReason:'Original laptop under repair',recipientName:'',companyName:'',temporaryDescription:''});setModal('assign')}} onReturn={openReturnDialog} onStatusChange={markStatus} dateLabel={dateLabel}/>}
+        {page==='Assignments'&&<AssignmentsPage assignments={assignments} assets={assets} employees={employees} onAdd={()=>{setAssignmentForm({assetId:'',employeeId:'',assignedDate:localDateString(),issuedByEmployeeId:'',notes:'',isTemporary:false,temporaryType:'Regular',originalAssetId:'',temporaryReason:'',recipientName:'',companyName:'',temporaryDescription:''});setModal('assign')}} onReturn={openReturnDialog} onStatusChange={markStatus} dateLabel={dateLabel}/>}
         {page==='Repairs'&&<RepairsPage assets={assets} onComplete={completeRepair} onOpen={a=>{setSelectedAsset(a);setRepairForm({description:a.notes||'',reportedDate:a.repairReportedDate||localDateString(),sentDate:a.sentForRepairDate||localDateString(),estimatedCompletionDate:a.estimatedRepairCompletionDate||'',vendor:a.repairVendor||a.vendor||'',cost:String(a.currentRepairCost??(a.repairHistory||[]).find(r=>!r.completedDate)?.cost??''),repairStatus:a.status==='Needs Repair'?'Needs Repair':'Under Repair'});setModal('repair')}} currency={currency} dateLabel={dateLabel}/>}
         {page==='Reports'&&<ReportsPage assets={assets} assignments={assignments} employees={employees} currency={currency}/>}
         {page==='Settings'&&<SettingsPage onReset={()=>{if(confirm('Restore the initial records? This clears saved changes in this browser.')){localStorage.removeItem('itam-assets');localStorage.removeItem('itam-employees');localStorage.removeItem('itam-assignments');localStorage.removeItem('itam-activity');localStorage.removeItem('itam-bulk-items');localStorage.removeItem('itam-bulk-transactions');location.reload();}}}/>}
